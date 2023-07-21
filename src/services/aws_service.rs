@@ -1,15 +1,18 @@
-use std::collections::HashMap;
-use rusoto_ec2::{Ec2, DescribeInstancesRequest, Ec2Client};
-use rusoto_signature::Region;
-use rusoto_core::{HttpClient};
-use tokio::time::sleep;
 use crate::models::cloud_instance::{CloudInstance, LaunchCloudInstance};
+use rusoto_core::HttpClient;
 use rusoto_credential::{InstanceMetadataProvider, ProvideAwsCredentials};
+use rusoto_ec2::{DescribeInstancesRequest, Ec2, Ec2Client};
+use rusoto_signature::Region;
+use std::collections::HashMap;
 use std::time::Duration;
+use tokio::time::sleep;
 
 async fn get_credentials() -> Result<rusoto_credential::AwsCredentials, String> {
     let provider = InstanceMetadataProvider::new();
-    let credentials = provider.credentials().await.map_err(|err| format!("Failed to get credentials: {:?}", err))?;
+    let credentials = provider
+        .credentials()
+        .await
+        .map_err(|err| format!("Failed to get credentials: {:?}", err))?;
 
     Ok(credentials)
 }
@@ -47,11 +50,14 @@ pub async fn launch_instance(launch: LaunchCloudInstance) -> Result<CloudInstanc
     // Launch the instance
     let response = ec2_client.run_instances(run_instance_req).await;
 
-     // Check if the instance was launched successfully
+    // Check if the instance was launched successfully
     let reservation = response.map_err(|err| format!("Error launching instance: {:?}", err))?;
     if let Some(instance) = reservation.instances {
         if let Some(instance_data) = instance.first() {
-            let instance_id = instance_data.instance_id.as_ref().ok_or("Instance ID not found")?;
+            let instance_id = instance_data
+                .instance_id
+                .as_ref()
+                .ok_or("Instance ID not found")?;
 
             // Wait for the instance to have an IP address
             let ip_address = wait_for_instance_ready(&ec2_client, instance_id).await?;
@@ -66,7 +72,10 @@ pub async fn launch_instance(launch: LaunchCloudInstance) -> Result<CloudInstanc
     Err("Failed to get the instance details.".to_string())
 }
 
-async fn wait_for_instance_ready(ec2_client: &Ec2Client, instance_id: &str) -> Result<String, String> {
+async fn wait_for_instance_ready(
+    ec2_client: &Ec2Client,
+    instance_id: &str,
+) -> Result<String, String> {
     loop {
         let describe_instances_req = DescribeInstancesRequest {
             instance_ids: Some(vec![instance_id.to_string()]),
@@ -78,7 +87,11 @@ async fn wait_for_instance_ready(ec2_client: &Ec2Client, instance_id: &str) -> R
         if let Ok(result) = response {
             if let Some(reservations) = result.reservations {
                 if let Some(instance) = reservations[0].instances.as_ref() {
-                    if instance[0].public_ip_address.as_ref().map_or(false, |ip| !ip.is_empty()) {
+                    if instance[0]
+                        .public_ip_address
+                        .as_ref()
+                        .map_or(false, |ip| !ip.is_empty())
+                    {
                         return Ok(instance[0].public_ip_address.clone().unwrap());
                     }
                 }
@@ -106,7 +119,9 @@ mod tests {
             implementation: "strfry".to_string(),
         };
 
-        let instance = launch_instance(launch).await.expect("Failed to launch instance");
+        let instance = launch_instance(launch)
+            .await
+            .expect("Failed to launch instance");
 
         assert!(instance.id.starts_with("i-"));
         assert!(!instance.ip_address.is_empty());

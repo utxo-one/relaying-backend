@@ -1,8 +1,8 @@
 use sqlx::PgPool;
 
 use crate::{
-    models::relay::Relay,
     models::cloud_instance::LaunchCloudInstance,
+    models::relay::Relay,
     repositories::{
         relay_repository::{self, create_relay, CreateRelay},
         user_repository::user_exists,
@@ -29,7 +29,6 @@ pub async fn create_relay_service(
     pool: &PgPool,
     relay: CreateRelayService,
 ) -> Result<Relay, String> {
-
     if !user_exists(&pool, relay.user_npub.clone()).await {
         return Err("User does not exist".to_string());
     }
@@ -60,16 +59,14 @@ pub async fn create_relay_service(
                 read_whitelist: relay.read_whitelist,
                 expires_at: relay.expires_at,
             };
-        
+
             let relay = relay_repository::create_relay(&pool, create_relay)
                 .await
                 .expect("Failed to create relay");
-        
+
             Ok(relay)
         }
-        Err(err) => {
-            Err(err)
-        }
+        Err(err) => Err(err),
     }
 }
 
@@ -83,7 +80,8 @@ mod tests {
     async fn create_test_pool() -> PgPool {
         dotenvy::dotenv().ok();
 
-        let db_url = dotenvy::var("DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
+        let db_url =
+            dotenvy::var("DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
         let pool = PgPool::connect(&db_url)
             .await
             .expect("Failed to create test pool");
