@@ -65,7 +65,7 @@ mod tests {
     async fn create_test_pool() -> PgPool {
         dotenvy::dotenv().ok();
 
-        let db_url = env::var("DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
+        let db_url = env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
         let pool = PgPool::connect(&db_url)
             .await
             .expect("Failed to create test pool");

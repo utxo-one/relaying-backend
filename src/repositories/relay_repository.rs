@@ -27,6 +27,37 @@ pub async fn get_all_relays(pool: &PgPool) -> Vec<Relay> {
     }
 }
 
+pub async fn get_relays_by_npub(pool: &PgPool, npub: String) -> Vec<Relay> {
+    let relays = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE user_npub = $1")
+        .bind(npub)
+        .fetch_all(pool)
+        .await;
+
+    match relays {
+        Ok(relays) => relays.into_iter().map(Relay::from_db_relay).collect(),
+        _ => vec![],
+    }
+}
+
+pub async fn delete_relay(pool: &PgPool, uuid: String) -> Result<(), Error> {
+    sqlx::query("DELETE FROM relays WHERE uuid = $1")
+        .bind(uuid)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn soft_delete_relay(pool: &PgPool, uuid: String) -> Result<(), Error> {
+    sqlx::query("UPDATE relays SET deleted_at = $1 WHERE uuid = $2")
+        .bind(NaiveDateTime::from_timestamp_opt(0, 0))
+        .bind(uuid)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
 pub struct CreateRelay {
     pub user_npub: String,
     pub name: String,
@@ -104,21 +135,20 @@ pub async fn update_relay(
 #[cfg(test)]
 mod tests {
     use crate::{
-        models::user::User, repositories::user_repository::create_user,
+        repositories::user_repository::{create_user, delete_user},
         util::generators::generate_random_string,
     };
 
     use super::*;
-    use std::env;
 
     async fn create_test_pool() -> PgPool {
         dotenvy::dotenv().ok();
 
-        let db_url = env::var("DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
+        let db_url =
+            dotenvy::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
         let pool = PgPool::connect(&db_url)
             .await
             .expect("Failed to create test pool");
-        clean_up_data(&pool).await;
         pool
     }
 
@@ -133,15 +163,14 @@ mod tests {
         user.npub
     }
 
-    async fn clean_up_data(pool: &PgPool) {
-        sqlx::query!("DELETE FROM relays WHERE uuid != null")
-            .execute(pool)
+    async fn delete_test_user_and_relay(pool: &PgPool, npub: String, relay: Relay) {
+        delete_relay(&pool, relay.uuid)
             .await
-            .expect("Failed to clean up relays");
-        sqlx::query!("DELETE FROM users WHERE npub != null")
-            .execute(pool)
+            .expect("Failed to delete relay");
+
+        delete_user(&pool, &npub)
             .await
-            .expect("Failed to clean up users");
+            .expect("Failed to delete user");
     }
 
     #[tokio::test]
@@ -154,7 +183,7 @@ mod tests {
 
         // Test create_relay function
         let relay = CreateRelay {
-            user_npub: user_npub,
+            user_npub: user_npub.clone(),
             name: relay_name.to_string(),
             description: relay_description.to_string(),
             subdomain: generate_random_string(10).await,
@@ -178,6 +207,8 @@ mod tests {
             .expect("Failed to retrieve relay");
         assert_eq!(retrieved_relay.name, relay_name);
         assert_eq!(retrieved_relay.description, relay_description);
+
+        delete_test_user_and_relay(&pool, user_npub, retrieved_relay).await;
     }
 
     #[tokio::test]
@@ -189,7 +220,7 @@ mod tests {
 
         // Create a relay to update
         let relay = CreateRelay {
-            user_npub: relay_user_npub,
+            user_npub: relay_user_npub.clone(),
             name: relay_name.to_string(),
             description: relay_description.to_string(),
             subdomain: generate_random_string(10).await,
@@ -226,5 +257,7 @@ mod tests {
 
         assert_eq!(updated_relay.name, updated_name);
         assert_eq!(updated_relay.description, updated_description);
+
+        delete_test_user_and_relay(&pool, relay_user_npub, updated_relay).await;
     }
 }

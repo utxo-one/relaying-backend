@@ -1,9 +1,9 @@
+use crate::models::jwt::{LoginInfo, LoginResponse};
+use crate::services::jwt_service::generate_token;
 use actix_web::{web, App, Error, HttpResponse, HttpServer, Responder};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use std::env;
-use crate::models::jwt::{LoginInfo, LoginResponse};
-use crate::services::jwt_service::generate_token;
 
 pub async fn login_handler(info: web::Json<LoginInfo>) -> Result<HttpResponse, Error> {
     // Assuming "npub" is a unique identifier for the user (e.g., username or email)
@@ -14,7 +14,9 @@ pub async fn login_handler(info: web::Json<LoginInfo>) -> Result<HttpResponse, E
         Ok(token) => Ok(HttpResponse::Ok().json(LoginResponse { token })),
         Err(e) => {
             eprintln!("Error generating token: {:?}", e);
-            Err(actix_web::error::ErrorInternalServerError("Failed to generate token"))
+            Err(actix_web::error::ErrorInternalServerError(
+                "Failed to generate token",
+            ))
         }
     }
 }
@@ -25,10 +27,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::jwt::LoginResponse;
-    use crate::models::jwt::LoginInfo;
     use crate::handlers::jwt_handler::configure_routes;
-    use actix_web::{test, App, http::StatusCode};
+    use crate::models::jwt::LoginInfo;
+    use crate::models::jwt::LoginResponse;
+    use actix_web::{http::StatusCode, test, App};
 
     #[tokio::test]
     async fn test_it_can_get_jwt_token() {
@@ -51,5 +53,4 @@ mod tests {
 
         assert!(login_response.token.len() > 0);
     }
-
 }

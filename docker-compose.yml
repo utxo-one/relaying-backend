@@ -7,11 +7,25 @@ services:
     environment:
       - POSTGRES_USER=${DB_USERNAME}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_DB=${DB_NAME},${DB_TEST_NAME} # Comma-separated list of database names
+      - POSTGRES_DB=${DB_NAME}
     volumes:
       - db-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
 
+  db-test:
+    image: postgres:latest
+    container_name: test-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${DB_USERNAME}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_TEST_NAME}
+    volumes:
+      - test-db-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
 volumes:
   db-data:
+  test-db-data:

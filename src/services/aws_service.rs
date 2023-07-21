@@ -22,7 +22,62 @@ pub async fn launch_instance(launch: LaunchCloudInstance) -> Result<CloudInstanc
     dotenvy::dotenv().ok();
     let env_provider = rusoto_credential::EnvironmentProvider::default();
     let ec2_client = Ec2Client::new_with(HttpClient::new().unwrap(), env_provider, Region::UsEast1);
+    let run_instance_req = create_instance_request(launch);
+    let response = ec2_client.run_instances(run_instance_req).await;
 
+    // Check if the instance was launched successfully
+    let reservation = response.map_err(|err| format!("Error launching instance: {:?}", err))?;
+    if let Some(instance) = reservation.instances {
+        if let Some(instance_data) = instance.first() {
+            let instance_id = instance_data
+                .instance_id
+                .as_ref()
+                .ok_or("Instance ID not found")?;
+
+            // Wait for the instance to have an IP address
+            let ip_address = wait_for_instance_ready(&ec2_client, instance_id).await?;
+
+            return Ok(CloudInstance {
+                id: instance_id.clone(),
+                ip_address: ip_address.clone(),
+            });
+        }
+    }
+    Err("Failed to get the instance details.".to_string())
+}
+
+pub async fn terminate_instance(instance_id: &str) -> Result<(), String> {
+    // Create an EC2 client
+    dotenvy::dotenv().ok();
+    let env_provider = rusoto_credential::EnvironmentProvider::default();
+    let ec2_client = Ec2Client::new_with(HttpClient::new().unwrap(), env_provider, Region::UsEast1);
+
+    // Create the request to terminate an instance
+    let terminate_instance_req = rusoto_ec2::TerminateInstancesRequest {
+        instance_ids: vec![instance_id.to_string()],
+        ..Default::default()
+    };
+
+    // Terminate the instance
+    let response = ec2_client.terminate_instances(terminate_instance_req).await;
+
+    // Check if the instance was terminated successfully
+    let result = response.map_err(|err| format!("Error terminating instance: {:?}", err))?;
+    if let Some(terminating_instances) = result.terminating_instances {
+        if let Some(instance) = terminating_instances.first() {
+            if instance
+                .instance_id
+                .as_ref()
+                .map_or(false, |id| id == instance_id)
+            {
+                return Ok(());
+            }
+        }
+    }
+    Err("Failed to terminate the instance.".to_string())
+}
+
+fn create_instance_request(launch: LaunchCloudInstance) -> rusoto_ec2::RunInstancesRequest {
     // Create tags for the instance with a name
     let mut tags = HashMap::new();
     tags.insert("Name".to_string(), launch.name.to_string());
@@ -47,29 +102,7 @@ pub async fn launch_instance(launch: LaunchCloudInstance) -> Result<CloudInstanc
         ..Default::default()
     };
 
-    // Launch the instance
-    let response = ec2_client.run_instances(run_instance_req).await;
-
-    // Check if the instance was launched successfully
-    let reservation = response.map_err(|err| format!("Error launching instance: {:?}", err))?;
-    if let Some(instance) = reservation.instances {
-        if let Some(instance_data) = instance.first() {
-            let instance_id = instance_data
-                .instance_id
-                .as_ref()
-                .ok_or("Instance ID not found")?;
-
-            // Wait for the instance to have an IP address
-            let ip_address = wait_for_instance_ready(&ec2_client, instance_id).await?;
-
-            return Ok(CloudInstance {
-                id: instance_id.clone(),
-                ip_address: ip_address.clone(),
-            });
-        }
-    }
-
-    Err("Failed to get the instance details.".to_string())
+    run_instance_req
 }
 
 async fn wait_for_instance_ready(
@@ -98,7 +131,7 @@ async fn wait_for_instance_ready(
             }
         }
 
-        sleep(std::time::Duration::from_secs(3)).await;
+        sleep(std::time::Duration::from_secs(1)).await;
     }
 }
 
@@ -110,7 +143,7 @@ mod tests {
     use crate::util::generators::generate_random_string;
 
     #[tokio::test]
-    async fn test_launch_instance() {
+    async fn test_launch_and_terminate_instance() {
         let instance_name = generate_random_string(10).await;
         let launch = LaunchCloudInstance {
             name: instance_name.clone(),
@@ -125,5 +158,9 @@ mod tests {
 
         assert!(instance.id.starts_with("i-"));
         assert!(!instance.ip_address.is_empty());
+
+        let terminate_result = terminate_instance(&instance.id).await;
+
+        assert!(terminate_result.is_ok());
     }
 }

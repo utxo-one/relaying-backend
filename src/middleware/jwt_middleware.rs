@@ -1,5 +1,5 @@
-use jsonwebtoken::{decode, DecodingKey, Validation};
 use crate::models::jwt::Claims;
+use jsonwebtoken::{decode, DecodingKey, Validation};
 
 async fn validate_token(
     req: actix_web::HttpRequest,
@@ -18,11 +18,11 @@ async fn validate_token(
                 // Token is valid
                 // You can now use token_data.claims.sub to identify the user
                 Ok(req)
-            },
+            }
             Err(_) => {
                 // Token is invalid
                 Err(actix_web::error::ErrorUnauthorized("Invalid token"))
-            },
+            }
         }
     } else {
         // Token not provided

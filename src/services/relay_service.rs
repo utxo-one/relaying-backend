@@ -72,7 +72,13 @@ pub async fn create_relay_service(
 
 #[cfg(test)]
 mod tests {
-    use crate::repositories::user_repository::create_user;
+    use crate::{
+        repositories::{
+            relay_repository::delete_relay,
+            user_repository::{create_user, delete_user},
+        },
+        services::aws_service::terminate_instance,
+    };
 
     use super::*;
     use serde_json::json;
@@ -131,5 +137,14 @@ mod tests {
         assert_eq!(relay.cloud_provider, cloud_provider);
         assert_eq!(relay.write_whitelist, write_whitelist);
         assert_eq!(relay.read_whitelist, read_whitelist);
+
+        let terminate_instance = terminate_instance(&relay.instance_id).await;
+        assert!(terminate_instance.is_ok());
+
+        let delete_relay = delete_relay(&pool, relay.uuid).await;
+        assert!(delete_relay.is_ok());
+
+        let delete_user = delete_user(&pool, &user_npub).await;
+        assert!(delete_user.is_ok());
     }
 }
