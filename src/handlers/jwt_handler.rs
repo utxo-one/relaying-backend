@@ -11,7 +11,9 @@ pub async fn login_handler(info: web::Json<LoginInfo>) -> Result<HttpResponse, E
 
     // Generate a JWT token based on the "npub"
     match generate_token(npub).await {
-        Ok(token) => Ok(HttpResponse::Ok().json(LoginResponse { token })),
+        Ok(token) => {
+            Ok(HttpResponse::Ok().json(LoginResponse { token }))
+        },
         Err(e) => {
             eprintln!("Error generating token: {:?}", e);
             Err(actix_web::error::ErrorInternalServerError(
@@ -19,10 +21,6 @@ pub async fn login_handler(info: web::Json<LoginInfo>) -> Result<HttpResponse, E
             ))
         }
     }
-}
-
-pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::resource("/login").route(web::post().to(login_handler)));
 }
 
 #[cfg(test)]
