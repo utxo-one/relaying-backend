@@ -22,6 +22,7 @@ rusoto_credential = "0.48"
 rusoto_core = "0.48"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
+jsonwebtoken = "7.1.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

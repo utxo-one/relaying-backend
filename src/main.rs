@@ -5,12 +5,14 @@ use std::env;
 mod handlers {
     pub mod handler;
     pub mod user_handler;
+    pub mod jwt_handler;
 }
 
 mod models {
     pub mod cloud_instance;
     pub mod relay;
     pub mod user;
+    pub mod jwt;
 }
 
 mod repositories {
@@ -21,6 +23,11 @@ mod repositories {
 mod services {
     pub mod aws_service;
     pub mod relay_service;
+    pub mod jwt_service;
+}
+
+mod middleware {
+    pub mod jwt_middleware;
 }
 
 mod util {
