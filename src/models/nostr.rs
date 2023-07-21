@@ -1,8 +1,8 @@
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use nostr::{Timestamp, SECP256K1};
 use secp256k1::schnorr::Signature;
 use secp256k1::{Message, XOnlyPublicKey};
-use nostr::{Timestamp, SECP256K1};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct NostrEvent {

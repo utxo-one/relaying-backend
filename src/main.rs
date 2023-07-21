@@ -1,21 +1,21 @@
-use actix_web::{web::Data, App, HttpServer, http};
 use actix_cors::Cors;
+use actix_web::{http, web::Data, App, HttpServer};
 use middleware::cors_middleware::{self, cors_middleware};
 use sqlx::postgres::PgPool;
 use std::env;
 
 mod handlers {
-    pub mod handler;
     pub mod auth_handler;
+    pub mod handler;
     pub mod user_handler;
 }
 
 mod models {
     pub mod cloud_instance;
     pub mod jwt;
+    pub mod nostr;
     pub mod relay;
     pub mod user;
-    pub mod nostr;
 }
 
 mod repositories {
@@ -26,13 +26,13 @@ mod repositories {
 mod services {
     pub mod aws_service;
     pub mod jwt_service;
-    pub mod relay_service;
     pub mod nostr_service;
+    pub mod relay_service;
 }
 
 mod middleware {
-    pub mod jwt_middleware;
     pub mod cors_middleware;
+    pub mod jwt_middleware;
 }
 
 mod util {
@@ -56,7 +56,7 @@ async fn main() -> std::io::Result<()> {
     // Start the Actix Web server
     HttpServer::new(move || {
         App::new()
-        .wrap(Cors::permissive())
+            .wrap(Cors::permissive())
             .app_data(Data::new(pool.clone())) // Share the pool across all routes
             .configure(handlers::user_handler::configure_routes)
             .configure(handlers::auth_handler::configure_routes) // Mount the user handlers
