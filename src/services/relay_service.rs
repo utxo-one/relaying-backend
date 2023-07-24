@@ -13,6 +13,7 @@ use crate::{
 
 pub struct CreateRelayService {
     pub user_npub: String,
+    pub relay_order_uuid: String,
     pub name: String,
     pub description: String,
     pub subdomain: Option<String>,
@@ -46,6 +47,7 @@ pub async fn create_relay_service(
         Ok(instance) => {
             let create_relay = CreateRelay {
                 user_npub: relay.user_npub,
+                relay_order_uuid: relay.relay_order_uuid,
                 name: relay.name,
                 description: relay.description,
                 subdomain: relay.subdomain.unwrap_or_default(),
@@ -99,9 +101,8 @@ mod tests {
     pub async fn test_create_relay_service() {
         let pool = create_test_pool().await;
         let npub = generate_random_string(16).await;
-
+        let relay_order_uuid = "alsdjhflkjasdf".to_string();
         let user = create_user(&pool, &npub);
-
         let user_npub = &user.await.unwrap().npub;
         let name = "Test Relay".to_string();
         let description = "This is a test relay".to_string();
@@ -114,6 +115,7 @@ mod tests {
 
         let create_relay = CreateRelayService {
             user_npub: user_npub.clone(),
+            relay_order_uuid: relay_order_uuid.clone(),
             name: name.clone(),
             description: description.clone(),
             subdomain: None,

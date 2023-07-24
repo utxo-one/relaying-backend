@@ -60,6 +60,7 @@ pub async fn soft_delete_relay(pool: &PgPool, uuid: String) -> Result<(), Error>
 
 pub struct CreateRelay {
     pub user_npub: String,
+    pub relay_order_uuid: String,
     pub name: String,
     pub description: String,
     pub subdomain: String,
@@ -77,12 +78,13 @@ pub struct CreateRelay {
 pub async fn create_relay(pool: &PgPool, relay: CreateRelay) -> Result<Relay, Error> {
     let uuid = Uuid::new_v4();
     let db_relay: Relay = sqlx::query_as::<_, Relay>(
-        "INSERT INTO relays (uuid, user_npub, name, description, subdomain, custom_domain, instance_type, instance_id, instance_ip, implementation, cloud_provider, write_whitelist, read_whitelist, created_at, updated_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        "INSERT INTO relays (uuid, user_npub, relay_order_uuid, name, description, subdomain, custom_domain, instance_type, instance_id, instance_ip, implementation, cloud_provider, write_whitelist, read_whitelist, created_at, updated_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING *",
     )
     .bind(uuid.to_string())
     .bind(relay.user_npub.clone())
+    .bind(relay.relay_order_uuid)
     .bind(relay.name.clone())
     .bind(relay.description.clone())
     .bind(relay.subdomain.clone())
@@ -145,7 +147,7 @@ mod tests {
         dotenvy::dotenv().ok();
 
         let db_url =
-            dotenvy::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
+            dotenvy::var("DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
         let pool = PgPool::connect(&db_url)
             .await
             .expect("Failed to create test pool");
@@ -184,6 +186,7 @@ mod tests {
         // Test create_relay function
         let relay = CreateRelay {
             user_npub: user_npub.clone(),
+            relay_order_uuid: generate_random_string(10).await,
             name: relay_name.to_string(),
             description: relay_description.to_string(),
             subdomain: generate_random_string(10).await,
@@ -221,6 +224,7 @@ mod tests {
         // Create a relay to update
         let relay = CreateRelay {
             user_npub: relay_user_npub.clone(),
+            relay_order_uuid: generate_random_string(10).await,
             name: relay_name.to_string(),
             description: relay_description.to_string(),
             subdomain: generate_random_string(10).await,

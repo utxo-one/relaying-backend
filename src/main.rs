@@ -7,6 +7,7 @@ use std::env;
 mod handlers {
     pub mod auth_handler;
     pub mod handler;
+    pub mod relay_order_handler;
     pub mod user_handler;
 }
 
@@ -15,10 +16,12 @@ mod models {
     pub mod jwt;
     pub mod nostr;
     pub mod relay;
+    pub mod relay_orders;
     pub mod user;
 }
 
 mod repositories {
+    pub mod relay_order_repository;
     pub mod relay_repository;
     pub mod user_repository;
 }
@@ -59,7 +62,8 @@ async fn main() -> std::io::Result<()> {
             .wrap(Cors::permissive())
             .app_data(Data::new(pool.clone())) // Share the pool across all routes
             .configure(handlers::user_handler::configure_routes)
-            .configure(handlers::auth_handler::configure_routes) // Mount the user handlers
+            .configure(handlers::auth_handler::configure_routes)
+            .configure(handlers::relay_order_handler::configure_routes) // Mount the user handlers
     })
     .bind("127.0.0.1:8888")?
     .run()
