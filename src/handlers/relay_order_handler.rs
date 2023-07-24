@@ -1,6 +1,7 @@
+use crate::models::relay::Relay;
 use crate::{
-    handlers::handler::ErrorResponse,
-    repositories::{self, relay_order_repository::CreateRelayOrder},
+    handlers::handler::ErrorResponse, models::relay_orders::CreateRelayOrder,
+    repositories::relay_order_repository::RelayOrderRepository,
 };
 use actix_web::http::header::ContentType;
 use actix_web::test::TestRequest;
@@ -13,17 +14,13 @@ async fn create_relay_order_handler(
     pool: web::Data<PgPool>,
     data: web::Json<CreateRelayOrder>,
 ) -> impl Responder {
-    let order =
-        repositories::relay_order_repository::create_relay_order(data.into_inner(), &pool).await;
+    let order = RelayOrderRepository::new(&pool)
+        .create(data.into_inner())
+        .await;
 
     match order {
         Ok(order) => HttpResponse::Created().json(DataResponse::new(order)),
-        Err(e) => {
-            println!("Failed to create relay order: {}", e);
-            HttpResponse::InternalServerError().json(ErrorResponse::new(
-                e.to_string(),
-            ))
-        }
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse::new(e.to_string())),
     }
 }
 
@@ -36,11 +33,8 @@ mod tests {
     use actix_web::web::Data;
 
     use crate::{
-        models::{relay_orders::{RelayOrder, RelayOrderStatus}, user::User},
-        repositories::{
-            relay_order_repository::{create_relay_order, delete_relay_order},
-            user_repository::{create_user, delete_user},
-        },
+        models::{relay_orders::{RelayOrder, RelayOrderStatus}, cloud_provider::{CloudProvider, InstanceType}, relay::RelayImplementation},
+        repositories::user_repository::{create_user, delete_user},
         util::generators::generate_random_string,
     };
 
@@ -76,7 +70,8 @@ mod tests {
 
     async fn delete_test_relay_order(uuid: String) {
         let pool = create_test_pool().await;
-        delete_relay_order(&pool, uuid)
+        let repo = RelayOrderRepository::new(&pool);
+        repo.delete(uuid)
             .await
             .expect("Failed to delete relay order");
     }
@@ -89,17 +84,25 @@ mod tests {
         let order: CreateRelayOrder = CreateRelayOrder {
             user_npub: user_npub.clone(),
             amount: 1000,
-            cloud_provider: "aws".to_string(),
-            instance_type: "t2.micro".to_string(),
-            implementation: "openvpn".to_string(),
+            cloud_provider: CloudProvider::AWS,
+            instance_type: InstanceType::AwsT2Nano,
+            implementation: RelayImplementation::Strfry,
             hostname: "test".to_string(),
-            status: RelayOrderStatus::Pending.to_string(),
+            status: RelayOrderStatus::Pending,
         };
 
-        let app = test::init_service(App::new().app_data(Data::new(pool.clone())).route("/relay_orders", web::post().to(create_relay_order_handler))).await;
-        let req = test::TestRequest::post().uri("/relay_orders").set_json(&order).to_request();
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(pool.clone()))
+                .route("/relay_orders", web::post().to(create_relay_order_handler)),
+        )
+        .await;
+        let req = test::TestRequest::post()
+            .uri("/relay_orders")
+            .set_json(&order)
+            .to_request();
         let resp = test::call_service(&app, req).await;
-        
+
         assert_eq!(resp.status(), 201);
         let response: DataResponse<RelayOrder> = test::read_body_json(resp).await;
         assert_eq!(response.data.user_npub, user_npub);

@@ -1,12 +1,26 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+use super::{cloud_provider::{CloudProvider, InstanceType}, relay::{RelayImplementation, Relay}};
+
+#[derive(Debug, Deserialize, Serialize, sqlx::Type)]
+#[sqlx(type_name = "relay_order_status", rename_all = "lowercase")]
 pub enum RelayOrderStatus {
     Pending,
     Paid,
     Redeemed,
 }
+
+impl RelayOrderStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelayOrderStatus::Pending => "pending",
+            RelayOrderStatus::Paid => "paid",
+            RelayOrderStatus::Redeemed => "redeemed",
+        }
+    }
+}
+
 
 impl ToString for RelayOrderStatus {
     fn to_string(&self) -> String {
@@ -23,11 +37,11 @@ pub struct RelayOrder {
     pub uuid: String,
     pub user_npub: String,
     pub amount: i32,
-    pub cloud_provider: String,
-    pub instance_type: String,
-    pub implementation: String,
+    pub cloud_provider: CloudProvider,
+    pub instance_type: InstanceType,
+    pub implementation: RelayImplementation,
     pub hostname: String,
-    pub status: String,
+    pub status: RelayOrderStatus,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -47,4 +61,15 @@ impl RelayOrder {
             updated_at: relay_order.updated_at,
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CreateRelayOrder {
+    pub user_npub: String,
+    pub amount: i32,
+    pub cloud_provider: CloudProvider,
+    pub instance_type: InstanceType,
+    pub implementation: RelayImplementation,
+    pub hostname: String,
+    pub status: RelayOrderStatus,
 }

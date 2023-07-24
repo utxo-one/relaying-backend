@@ -1,4 +1,5 @@
-use crate::models::relay::Relay;
+use crate::models::cloud_provider::{CloudProvider, InstanceType};
+use crate::models::relay::{Relay, RelayImplementation};
 use chrono::NaiveDateTime;
 use serde_json::json;
 use sqlx::postgres::PgPool;
@@ -65,11 +66,11 @@ pub struct CreateRelay {
     pub description: String,
     pub subdomain: String,
     pub custom_domain: String,
-    pub instance_type: String,
+    pub instance_type: InstanceType,
     pub instance_id: String,
     pub instance_ip: String,
-    pub implementation: String,
-    pub cloud_provider: String,
+    pub implementation: RelayImplementation,
+    pub cloud_provider: CloudProvider,
     pub write_whitelist: serde_json::Value,
     pub read_whitelist: serde_json::Value,
     pub expires_at: NaiveDateTime,
@@ -79,7 +80,7 @@ pub async fn create_relay(pool: &PgPool, relay: CreateRelay) -> Result<Relay, Er
     let uuid = Uuid::new_v4();
     let db_relay: Relay = sqlx::query_as::<_, Relay>(
         "INSERT INTO relays (uuid, user_npub, relay_order_uuid, name, description, subdomain, custom_domain, instance_type, instance_id, instance_ip, implementation, cloud_provider, write_whitelist, read_whitelist, created_at, updated_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::relay_instance_type, $9, $10, $11::relay_implementation, $12::relay_cloud_provider, $13, $14, $15, $16, $17)
          RETURNING *",
     )
     .bind(uuid.to_string())
@@ -89,11 +90,11 @@ pub async fn create_relay(pool: &PgPool, relay: CreateRelay) -> Result<Relay, Er
     .bind(relay.description.clone())
     .bind(relay.subdomain.clone())
     .bind(relay.custom_domain.clone())
-    .bind(relay.instance_type.clone())
+    .bind(relay.instance_type)
     .bind(relay.instance_id.clone())
     .bind(relay.instance_ip.clone())
-    .bind(relay.implementation.clone())
-    .bind(relay.cloud_provider.clone())
+    .bind(relay.implementation)
+    .bind(relay.cloud_provider)
     .bind(Json(relay.write_whitelist.clone()))
     .bind(Json(relay.read_whitelist.clone()))
     .bind(chrono::Local::now().naive_utc())
@@ -191,11 +192,11 @@ mod tests {
             description: relay_description.to_string(),
             subdomain: generate_random_string(10).await,
             custom_domain: generate_random_string(10).await,
-            instance_type: "Type A".to_string(),
+            instance_type: InstanceType::AwsT2Nano,
             instance_id: generate_random_string(10).await,
             instance_ip: generate_random_string(10).await,
-            implementation: "Some implementation".to_string(),
-            cloud_provider: "Cloud A".to_string(),
+            implementation: RelayImplementation::Strfry,
+            cloud_provider: CloudProvider::AWS,
             write_whitelist: json!({"key": "value"}),
             read_whitelist: json!({"key": "value"}),
             expires_at: chrono::Local::now().naive_utc(),
@@ -229,11 +230,11 @@ mod tests {
             description: relay_description.to_string(),
             subdomain: generate_random_string(10).await,
             custom_domain: generate_random_string(10).await,
-            instance_type: "Type A".to_string(),
+            instance_type: InstanceType::AwsT2Nano,
             instance_id: generate_random_string(10).await,
             instance_ip: generate_random_string(10).await,
-            implementation: "Some implementation".to_string(),
-            cloud_provider: "Cloud A".to_string(),
+            implementation: RelayImplementation::Strfry,
+            cloud_provider: CloudProvider::AWS,
             write_whitelist: json!({"key": "value"}),
             read_whitelist: json!({"key": "value"}),
             expires_at: chrono::Local::now().naive_utc(),

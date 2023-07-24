@@ -1,75 +1,98 @@
-use sqlx::PgPool;
-use crate::models::relay_orders::{RelayOrder, RelayOrderStatus};
 use serde::{Deserialize, Serialize};
+use sqlx::Error as SqlxError;
+use sqlx::PgPool;
+use std::fmt;
 
-#[derive(Serialize, Deserialize)]
-pub struct CreateRelayOrder {
-    pub user_npub: String,
-    pub amount: i32,
-    pub cloud_provider: String,
-    pub instance_type: String,
-    pub implementation: String,
-    pub hostname: String,
-    pub status: String,
+use crate::models::relay_orders::{CreateRelayOrder, RelayOrder};
+
+#[derive(Debug)]
+pub enum RelayOrderRepositoryError {
+    SqlxError(SqlxError),
+    NotFound,
 }
 
-pub async fn create_relay_order(
-    relay_order: CreateRelayOrder,
-    pool: &PgPool,
-) -> Result<RelayOrder, sqlx::Error> {
-    let uuid = uuid::Uuid::new_v4().to_string();
-    let relay_order: RelayOrder = sqlx::query_as::<_, RelayOrder>(
-        "
-        INSERT INTO relay_orders (uuid, user_npub, amount, cloud_provider, instance_type, implementation, hostname, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING uuid, user_npub, amount, cloud_provider, instance_type, implementation, hostname, status, created_at, updated_at
-        ")
-        .bind(uuid)
-        .bind(relay_order.user_npub)
-        .bind(relay_order.amount)
-        .bind(relay_order.cloud_provider)
-        .bind(relay_order.instance_type)
-        .bind(relay_order.implementation)
-        .bind(relay_order.hostname)
-        .bind(relay_order.status)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(relay_order)
+impl From<SqlxError> for RelayOrderRepositoryError {
+    fn from(err: SqlxError) -> Self {
+        RelayOrderRepositoryError::SqlxError(err)
+    }
 }
 
-pub async fn get_relay_order(pool: &PgPool, uuid: String) -> Result<RelayOrder, sqlx::Error> {
-    let relay_order: RelayOrder = sqlx::query_as::<_, RelayOrder>(
-        "
-        SELECT uuid, user_npub, amount, cloud_provider, instance_type, implementation, hostname, status, created_at, updated_at
-        FROM relay_orders
-        WHERE uuid = $1
-        ")
+impl fmt::Display for RelayOrderRepositoryError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RelayOrderRepositoryError::SqlxError(err) => err.fmt(f),
+            RelayOrderRepositoryError::NotFound => write!(f, "Relay order not found"),
+        }
+    }
+}
+
+pub struct RelayOrderRepository<'a> {
+    pub pool: &'a PgPool,
+}
+
+impl<'a> RelayOrderRepository<'a> {
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn create(
+        &self,
+        relay_order: CreateRelayOrder,
+    ) -> Result<RelayOrder, RelayOrderRepositoryError> {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        let relay_order: RelayOrder = sqlx::query_as::<_, RelayOrder>(
+            "
+            INSERT INTO relay_orders (uuid, user_npub, amount, cloud_provider, instance_type, implementation, hostname, status)
+            VALUES ($1, $2, $3, $4::relay_cloud_provider, $5::relay_instance_type, $6::relay_implementation, $7, $8::relay_order_status)
+            RETURNING uuid, user_npub, amount, cloud_provider, instance_type, implementation, hostname, status, created_at, updated_at
+            ")
+            .bind(uuid)
+            .bind(relay_order.user_npub)
+            .bind(relay_order.amount)
+            .bind(relay_order.cloud_provider.as_str())
+            .bind(relay_order.instance_type.as_str())
+            .bind(relay_order.implementation.as_str())
+            .bind(relay_order.hostname)
+            .bind(relay_order.status)
+            .fetch_one(self.pool)
+            .await?;
+
+        Ok(relay_order)
+    }
+
+    pub async fn get_one(&self, uuid: String) -> Result<RelayOrder, RelayOrderRepositoryError> {
+        let relay_order: RelayOrder = sqlx::query_as::<_, RelayOrder>(
+            "
+            SELECT uuid, user_npub, amount, cloud_provider, instance_type, implementation, hostname, status, created_at, updated_at
+            FROM relay_orders
+            WHERE uuid = $1
+            ")
+            .bind(uuid)
+            .fetch_one(self.pool)
+            .await?;
+
+        Ok(relay_order)
+    }
+
+    pub async fn delete(&self, uuid: String) -> Result<(), RelayOrderRepositoryError> {
+        sqlx::query(
+            "
+            DELETE FROM relay_orders
+            WHERE uuid = $1
+            ",
+        )
         .bind(uuid)
-        .fetch_one(pool)
+        .execute(self.pool)
         .await?;
 
-    Ok(relay_order)
-}
-
-pub async fn delete_relay_order(pool: &PgPool, uuid: String) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "
-        DELETE FROM relay_orders
-        WHERE uuid = $1
-        ",
-    )
-    .bind(uuid)
-    .execute(pool)
-    .await?;
-
-    Ok(())
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        models::relay_orders::RelayOrderStatus,
+        models::{relay_orders::RelayOrderStatus, cloud_provider::{CloudProvider, InstanceType}, relay::RelayImplementation},
         repositories::user_repository::{create_user, delete_user},
         util::generators::generate_random_string,
     };
@@ -98,7 +121,8 @@ mod tests {
     }
 
     async fn delete_test_relay_order(pool: &PgPool, uuid: String) {
-        delete_relay_order(&pool, uuid)
+        RelayOrderRepository::new(&pool)
+            .delete(uuid)
             .await
             .expect("Failed to delete relay order");
     }
@@ -117,14 +141,16 @@ mod tests {
         let create = CreateRelayOrder {
             user_npub: npub.clone(),
             amount: 1,
-            cloud_provider: "test".to_string(),
-            instance_type: "test".to_string(),
-            implementation: "test".to_string(),
+            cloud_provider: CloudProvider::AWS,
+            instance_type: InstanceType::AwsT2Nano,
+            implementation: RelayImplementation::Strfry,
             hostname: "test".to_string(),
-            status: RelayOrderStatus::Pending.to_string(),
+            status: RelayOrderStatus::Pending,
         };
 
-        let relay_order = create_relay_order(create, &pool)
+        let repo = RelayOrderRepository::new(&pool);
+        let relay_order = repo
+            .create(create)
             .await
             .expect("Failed to create relay order");
 
@@ -133,7 +159,7 @@ mod tests {
         delete_test_user(&pool, npub).await;
         delete_test_relay_order(&pool, relay_order.uuid.clone()).await;
 
-        get_relay_order(&pool, relay_order.uuid)
+        repo.get_one(relay_order.uuid)
             .await
             .expect_err("Failed to delete relay order");
     }
@@ -146,18 +172,22 @@ mod tests {
         let create = CreateRelayOrder {
             user_npub: npub.clone(),
             amount: 1,
-            cloud_provider: "test".to_string(),
-            instance_type: "test".to_string(),
-            implementation: "test".to_string(),
+            cloud_provider: CloudProvider::AWS,
+            instance_type: InstanceType::AwsT2Nano,
+            implementation: RelayImplementation::Strfry,
             hostname: "test".to_string(),
-            status: RelayOrderStatus::Pending.to_string(),
+            status: RelayOrderStatus::Pending,
         };
 
-        let relay_order = create_relay_order(create, &pool)
+        let repo = RelayOrderRepository::new(&pool);
+
+        let relay_order = repo
+            .create(create)
             .await
             .expect("Failed to create relay order");
 
-        let relay_order = get_relay_order(&pool, relay_order.uuid)
+        let relay_order = repo
+            .get_one(relay_order.uuid)
             .await
             .expect("Failed to get relay order");
 

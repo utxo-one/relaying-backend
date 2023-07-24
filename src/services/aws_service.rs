@@ -1,4 +1,4 @@
-use crate::models::cloud_instance::{CloudInstance, LaunchCloudInstance};
+use crate::models::cloud_provider::{CloudInstance, LaunchCloudInstance};
 use rusoto_core::HttpClient;
 use rusoto_credential::{InstanceMetadataProvider, ProvideAwsCredentials};
 use rusoto_ec2::{DescribeInstancesRequest, Ec2, Ec2Client};
@@ -85,7 +85,7 @@ fn create_instance_request(launch: LaunchCloudInstance) -> rusoto_ec2::RunInstan
     // Create the request to launch an instance
     let run_instance_req = rusoto_ec2::RunInstancesRequest {
         image_id: Some(launch.image_id.to_string()),
-        instance_type: Some(launch.instance_type.to_string()),
+        instance_type: Some(launch.instance_type.provider_key()),
         min_count: 1,
         max_count: 1,
         tag_specifications: Some(vec![rusoto_ec2::TagSpecification {
@@ -140,7 +140,7 @@ mod tests {
     use sqlx::PgPool;
 
     use super::*;
-    use crate::util::generators::generate_random_string;
+    use crate::{util::generators::generate_random_string, models::{cloud_provider::InstanceType, relay::RelayImplementation}};
 
     #[tokio::test]
     async fn test_launch_and_terminate_instance() {
@@ -148,8 +148,8 @@ mod tests {
         let launch = LaunchCloudInstance {
             name: instance_name.clone(),
             image_id: env!("STRFRY_AMI").to_string(),
-            instance_type: "t2.nano".to_string(),
-            implementation: "strfry".to_string(),
+            instance_type: InstanceType::AwsT2Nano,
+            implementation: RelayImplementation::Strfry,
         };
 
         let instance = launch_instance(launch)

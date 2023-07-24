@@ -1,5 +1,9 @@
+use std::fmt::{Display, Formatter};
+
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+
+use super::cloud_provider::{CloudProvider, InstanceType};
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Relay {
@@ -9,11 +13,11 @@ pub struct Relay {
     pub description: String,
     pub subdomain: String,
     pub custom_domain: String,
-    pub instance_type: String,
+    pub instance_type: InstanceType,
     pub instance_id: String,
     pub instance_ip: String,
-    pub implementation: String,
-    pub cloud_provider: String,
+    pub implementation: RelayImplementation,
+    pub cloud_provider: CloudProvider,
     pub write_whitelist: serde_json::Value,
     pub read_whitelist: serde_json::Value,
     pub created_at: chrono::NaiveDateTime,
@@ -24,6 +28,7 @@ pub struct Relay {
 
 impl Relay {
     pub fn from_db_relay(relay: Relay) -> Self {
+
         Relay {
             uuid: relay.uuid,
             user_npub: relay.user_npub,
@@ -42,6 +47,24 @@ impl Relay {
             updated_at: relay.updated_at,
             expires_at: relay.expires_at,
             deleted_at: relay.deleted_at,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, sqlx::Type, Clone, Copy)]
+#[sqlx(type_name = "relay_implementation", rename_all = "lowercase")]
+pub enum RelayImplementation {
+    Strfry,
+    NostrRelayRs,
+    Nostream,
+}
+
+impl RelayImplementation {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelayImplementation::Strfry => "strfry",
+            RelayImplementation::NostrRelayRs => "nostrrelayrs",
+            RelayImplementation::Nostream => "nostream",
         }
     }
 }

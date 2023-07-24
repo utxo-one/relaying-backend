@@ -1,8 +1,8 @@
 use sqlx::PgPool;
 
 use crate::{
-    models::cloud_instance::LaunchCloudInstance,
-    models::relay::Relay,
+    models::cloud_provider::LaunchCloudInstance,
+    models::{relay::{Relay, RelayImplementation}, cloud_provider::{CloudProvider, InstanceType}},
     repositories::{
         relay_repository::{self, create_relay, CreateRelay},
         user_repository::user_exists,
@@ -18,9 +18,9 @@ pub struct CreateRelayService {
     pub description: String,
     pub subdomain: Option<String>,
     pub custom_domain: Option<String>,
-    pub instance_type: String,
-    pub implementation: String,
-    pub cloud_provider: String,
+    pub instance_type: InstanceType,
+    pub implementation: RelayImplementation,
+    pub cloud_provider: CloudProvider,
     pub write_whitelist: serde_json::Value,
     pub read_whitelist: serde_json::Value,
     pub expires_at: chrono::NaiveDateTime,
@@ -37,8 +37,8 @@ pub async fn create_relay_service(
     let launch = LaunchCloudInstance {
         name: relay.name.clone(),
         image_id: dotenvy::var("STRFRY_AMI").unwrap(),
-        instance_type: relay.instance_type.clone(),
-        implementation: relay.implementation.clone(),
+        instance_type: relay.instance_type,
+        implementation: relay.implementation,
     };
 
     let instance = launch_instance(launch).await;
@@ -74,12 +74,14 @@ pub async fn create_relay_service(
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Debug;
+
     use crate::{
         repositories::{
             relay_repository::delete_relay,
-            user_repository::{create_user, delete_user},
+            user_repository::{create_user, delete_user}, relay_order_repository::RelayOrderRepository, self,
         },
-        services::aws_service::terminate_instance,
+        services::aws_service::terminate_instance, models::{cloud_provider::{CloudProvider, InstanceType}, relay::RelayImplementation, relay_orders::{RelayOrderStatus, CreateRelayOrder}},
     };
 
     use super::*;
@@ -101,28 +103,38 @@ mod tests {
     pub async fn test_create_relay_service() {
         let pool = create_test_pool().await;
         let npub = generate_random_string(16).await;
-        let relay_order_uuid = "alsdjhflkjasdf".to_string();
-        let user = create_user(&pool, &npub);
-        let user_npub = &user.await.unwrap().npub;
+        let user = repositories::user_repository::create_user(&pool, &npub).await;
+
+        let order = RelayOrderRepository::new(&pool).create(CreateRelayOrder {
+            user_npub: user.unwrap().npub.clone(),
+            amount: 100,
+            cloud_provider: CloudProvider::AWS,
+            instance_type: InstanceType::AwsT2Nano,
+            implementation: RelayImplementation::Strfry,
+            hostname: "test.relaying.io".to_string(),
+            status: RelayOrderStatus::Pending,
+        }).await.expect("Failed to create relay order");
+
+        let user_npub = &npub;
         let name = "Test Relay".to_string();
         let description = "This is a test relay".to_string();
-        let instance_type = "t2.nano".to_string();
-        let implementation = "strfry".to_string();
-        let cloud_provider = "aws".to_string();
+        let instance_type = InstanceType::AwsT2Nano;
+        let implementation = RelayImplementation::Strfry;
+        let cloud_provider = CloudProvider::AWS;
         let write_whitelist = json!({"key": "value"});
         let read_whitelist = json!({"key": "value"});
         let expires_at = chrono::Local::now().naive_utc();
 
         let create_relay = CreateRelayService {
             user_npub: user_npub.clone(),
-            relay_order_uuid: relay_order_uuid.clone(),
+            relay_order_uuid: order.uuid.clone(),
             name: name.clone(),
             description: description.clone(),
             subdomain: None,
             custom_domain: None,
-            instance_type: instance_type.clone(),
-            implementation: implementation.clone(),
-            cloud_provider: cloud_provider.clone(),
+            instance_type: instance_type,
+            implementation: implementation,
+            cloud_provider: cloud_provider,
             write_whitelist: write_whitelist.clone(),
             read_whitelist: read_whitelist.clone(),
             expires_at: expires_at.clone(),
@@ -134,9 +146,6 @@ mod tests {
 
         assert_eq!(relay.name, name);
         assert_eq!(relay.description, description);
-        assert_eq!(relay.instance_type, instance_type);
-        assert_eq!(relay.implementation, implementation);
-        assert_eq!(relay.cloud_provider, cloud_provider);
         assert_eq!(relay.write_whitelist, write_whitelist);
         assert_eq!(relay.read_whitelist, read_whitelist);
 

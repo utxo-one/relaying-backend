@@ -12,12 +12,12 @@ mod handlers {
 }
 
 mod models {
-    pub mod cloud_instance;
     pub mod jwt;
     pub mod nostr;
     pub mod relay;
     pub mod relay_orders;
     pub mod user;
+    pub mod cloud_provider;
 }
 
 mod repositories {
