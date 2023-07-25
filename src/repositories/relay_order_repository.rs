@@ -92,8 +92,12 @@ impl<'a> RelayOrderRepository<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        models::{relay_orders::RelayOrderStatus, cloud_provider::{CloudProvider, InstanceType}, relay::RelayImplementation},
-        repositories::user_repository::{create_user, delete_user},
+        models::{
+            cloud_provider::{CloudProvider, InstanceType},
+            relay::RelayImplementation,
+            relay_orders::RelayOrderStatus,
+        },
+        repositories::user_repository::UserRepository,
         util::generators::generate_random_string,
     };
 
@@ -113,7 +117,8 @@ mod tests {
     async fn create_test_user(pool: &PgPool) -> String {
         let user_npub = generate_random_string(16).await;
 
-        let user = create_user(&pool, &user_npub)
+        let user = UserRepository::new(&pool)
+            .create(&user_npub)
             .await
             .expect("Failed to create user");
 
@@ -128,7 +133,8 @@ mod tests {
     }
 
     async fn delete_test_user(pool: &PgPool, npub: String) {
-        delete_user(&pool, &npub)
+        UserRepository::new(&pool)
+            .delete(&npub)
             .await
             .expect("Failed to delete user");
     }

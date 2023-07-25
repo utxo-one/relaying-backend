@@ -33,8 +33,12 @@ mod tests {
     use actix_web::web::Data;
 
     use crate::{
-        models::{relay_orders::{RelayOrder, RelayOrderStatus}, cloud_provider::{CloudProvider, InstanceType}, relay::RelayImplementation},
-        repositories::user_repository::{create_user, delete_user},
+        models::{
+            cloud_provider::{CloudProvider, InstanceType},
+            relay::RelayImplementation,
+            relay_orders::{RelayOrder, RelayOrderStatus},
+        },
+        repositories::user_repository::UserRepository,
         util::generators::generate_random_string,
     };
 
@@ -54,7 +58,8 @@ mod tests {
     async fn create_test_user() -> String {
         let user_npub = generate_random_string(16).await;
         let pool = create_test_pool().await;
-        let user = create_user(&pool, &user_npub)
+        let user = UserRepository::new(&pool)
+            .create(&user_npub)
             .await
             .expect("Failed to create user");
 
@@ -63,7 +68,8 @@ mod tests {
 
     async fn delete_test_user(npub: &str) {
         let pool = create_test_pool().await;
-        delete_user(&pool, &npub)
+        UserRepository::new(&pool)
+            .delete(&npub)
             .await
             .expect("Failed to delete user");
     }

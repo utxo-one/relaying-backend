@@ -2,10 +2,13 @@ use sqlx::PgPool;
 
 use crate::{
     models::cloud_provider::LaunchCloudInstance,
-    models::{relay::{Relay, RelayImplementation}, cloud_provider::{CloudProvider, InstanceType}},
+    models::{
+        cloud_provider::{CloudProvider, InstanceType},
+        relay::{Relay, RelayImplementation, CreateRelay},
+    },
     repositories::{
-        relay_repository::{self, create_relay, CreateRelay},
-        user_repository::user_exists,
+        user_repository::UserRepository,
+        relay_repository::RelayRepository,
     },
     services::aws_service::launch_instance,
     util::generators::generate_random_string,
@@ -30,7 +33,8 @@ pub async fn create_relay_service(
     pool: &PgPool,
     relay: CreateRelayService,
 ) -> Result<Relay, String> {
-    if !user_exists(&pool, relay.user_npub.clone()).await {
+    let repo = UserRepository::new(&pool);
+    if !repo.user_exists(relay.user_npub.clone()).await {
         return Err("User does not exist".to_string());
     }
 
@@ -62,7 +66,7 @@ pub async fn create_relay_service(
                 expires_at: relay.expires_at,
             };
 
-            let relay = relay_repository::create_relay(&pool, create_relay)
+            let relay = RelayRepository::new(&pool).create(create_relay)
                 .await
                 .expect("Failed to create relay");
 
@@ -77,11 +81,16 @@ mod tests {
     use std::fmt::Debug;
 
     use crate::{
-        repositories::{
-            relay_repository::delete_relay,
-            user_repository::{create_user, delete_user}, relay_order_repository::RelayOrderRepository, self,
+        models::{
+            cloud_provider::{CloudProvider, InstanceType},
+            relay::RelayImplementation,
+            relay_orders::{CreateRelayOrder, RelayOrderStatus},
         },
-        services::aws_service::terminate_instance, models::{cloud_provider::{CloudProvider, InstanceType}, relay::RelayImplementation, relay_orders::{RelayOrderStatus, CreateRelayOrder}},
+        repositories::{
+            self, relay_order_repository::RelayOrderRepository,
+            user_repository::UserRepository,
+        },
+        services::aws_service::terminate_instance,
     };
 
     use super::*;
@@ -103,17 +112,20 @@ mod tests {
     pub async fn test_create_relay_service() {
         let pool = create_test_pool().await;
         let npub = generate_random_string(16).await;
-        let user = repositories::user_repository::create_user(&pool, &npub).await;
+        let user = UserRepository::new(&pool).create(&npub).await;
 
-        let order = RelayOrderRepository::new(&pool).create(CreateRelayOrder {
-            user_npub: user.unwrap().npub.clone(),
-            amount: 100,
-            cloud_provider: CloudProvider::AWS,
-            instance_type: InstanceType::AwsT2Nano,
-            implementation: RelayImplementation::Strfry,
-            hostname: "test.relaying.io".to_string(),
-            status: RelayOrderStatus::Pending,
-        }).await.expect("Failed to create relay order");
+        let order = RelayOrderRepository::new(&pool)
+            .create(CreateRelayOrder {
+                user_npub: user.unwrap().npub.clone(),
+                amount: 100,
+                cloud_provider: CloudProvider::AWS,
+                instance_type: InstanceType::AwsT2Nano,
+                implementation: RelayImplementation::Strfry,
+                hostname: "test.relaying.io".to_string(),
+                status: RelayOrderStatus::Pending,
+            })
+            .await
+            .expect("Failed to create relay order");
 
         let user_npub = &npub;
         let name = "Test Relay".to_string();
@@ -152,10 +164,10 @@ mod tests {
         let terminate_instance = terminate_instance(&relay.instance_id).await;
         assert!(terminate_instance.is_ok());
 
-        let delete_relay = delete_relay(&pool, relay.uuid).await;
+        let delete_relay = RelayRepository::new(&pool).delete(relay.uuid).await;
         assert!(delete_relay.is_ok());
 
-        let delete_user = delete_user(&pool, &user_npub).await;
+        let delete_user = UserRepository::new(&pool).delete(&user_npub).await;
         assert!(delete_user.is_ok());
     }
 }

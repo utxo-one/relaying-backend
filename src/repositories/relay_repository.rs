@@ -1,148 +1,134 @@
 use crate::models::cloud_provider::{CloudProvider, InstanceType};
-use crate::models::relay::{Relay, RelayImplementation};
+use crate::models::relay::{CreateRelay, Relay, RelayImplementation, UpdateRelay};
 use chrono::NaiveDateTime;
-use serde_json::json;
 use sqlx::postgres::PgPool;
 use sqlx::types::Json;
 use sqlx::Error;
 use uuid::Uuid;
 
-pub async fn get_relay(pool: &PgPool, uuid: String) -> Option<Relay> {
-    let relay = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE uuid = $1")
-        .bind(uuid)
-        .fetch_optional(pool)
-        .await;
-
-    match relay {
-        Ok(Some(relay)) => Some(Relay::from_db_relay(relay)),
-        _ => None,
-    }
+pub struct RelayRepository<'a> {
+    pub pool: &'a PgPool,
 }
 
-pub async fn get_all_relays(pool: &PgPool) -> Vec<Relay> {
-    let relays = sqlx::query_as("SELECT * FROM relays").fetch_all(pool).await;
-
-    match relays {
-        Ok(relays) => relays.into_iter().map(Relay::from_db_relay).collect(),
-        _ => vec![],
+impl<'a> RelayRepository<'a> {
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
     }
-}
 
-pub async fn get_relays_by_npub(pool: &PgPool, npub: String) -> Vec<Relay> {
-    let relays = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE user_npub = $1")
-        .bind(npub)
-        .fetch_all(pool)
-        .await;
+    pub async fn get_one(self: &Self, uuid: String) -> Option<Relay> {
+        let relay = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE uuid = $1")
+            .bind(uuid)
+            .fetch_optional(self.pool)
+            .await;
 
-    match relays {
-        Ok(relays) => relays.into_iter().map(Relay::from_db_relay).collect(),
-        _ => vec![],
+        match relay {
+            Ok(Some(relay)) => Some(Relay::from_db_relay(relay)),
+            _ => None,
+        }
     }
-}
 
-pub async fn delete_relay(pool: &PgPool, uuid: String) -> Result<(), Error> {
-    sqlx::query("DELETE FROM relays WHERE uuid = $1")
-        .bind(uuid)
-        .execute(pool)
+    pub async fn get_all(self: &Self) -> Vec<Relay> {
+        let relays = sqlx::query_as("SELECT * FROM relays")
+            .fetch_all(self.pool)
+            .await;
+
+        match relays {
+            Ok(relays) => relays.into_iter().map(Relay::from_db_relay).collect(),
+            _ => vec![],
+        }
+    }
+
+    pub async fn get_user_relays(self: &Self, npub: String) -> Vec<Relay> {
+        let relays = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE user_npub = $1")
+            .bind(npub)
+            .fetch_all(self.pool)
+            .await;
+
+        match relays {
+            Ok(relays) => relays.into_iter().map(Relay::from_db_relay).collect(),
+            _ => vec![],
+        }
+    }
+
+    pub async fn delete(self: &Self, uuid: String) -> Result<(), Error> {
+        sqlx::query("DELETE FROM relays WHERE uuid = $1")
+            .bind(uuid)
+            .execute(self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn soft_delete(self: &Self, uuid: String) -> Result<(), Error> {
+        sqlx::query("UPDATE relays SET deleted_at = $1 WHERE uuid = $2")
+            .bind(NaiveDateTime::from_timestamp_opt(0, 0))
+            .bind(uuid)
+            .execute(self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn create(self: &Self, relay: CreateRelay) -> Result<Relay, Error> {
+        let uuid = Uuid::new_v4();
+        let db_relay: Relay = sqlx::query_as::<_, Relay>(
+            "INSERT INTO relays (uuid, user_npub, relay_order_uuid, name, description, subdomain, custom_domain, instance_type, instance_id, instance_ip, implementation, cloud_provider, write_whitelist, read_whitelist, created_at, updated_at, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::relay_instance_type, $9, $10, $11::relay_implementation, $12::relay_cloud_provider, $13, $14, $15, $16, $17)
+            RETURNING *",
+        )
+        .bind(uuid.to_string())
+        .bind(relay.user_npub.clone())
+        .bind(relay.relay_order_uuid)
+        .bind(relay.name.clone())
+        .bind(relay.description.clone())
+        .bind(relay.subdomain.clone())
+        .bind(relay.custom_domain.clone())
+        .bind(relay.instance_type)
+        .bind(relay.instance_id.clone())
+        .bind(relay.instance_ip.clone())
+        .bind(relay.implementation)
+        .bind(relay.cloud_provider)
+        .bind(Json(relay.write_whitelist.clone()))
+        .bind(Json(relay.read_whitelist.clone()))
+        .bind(chrono::Local::now().naive_utc())
+        .bind(chrono::Local::now().naive_utc())
+        .bind(relay.expires_at.clone())
+        .fetch_one(self.pool)
         .await?;
 
-    Ok(())
-}
+        Ok(Relay::from_db_relay(db_relay))
+    }
 
-pub async fn soft_delete_relay(pool: &PgPool, uuid: String) -> Result<(), Error> {
-    sqlx::query("UPDATE relays SET deleted_at = $1 WHERE uuid = $2")
-        .bind(NaiveDateTime::from_timestamp_opt(0, 0))
-        .bind(uuid)
-        .execute(pool)
+    pub async fn update(
+        self: &Self,
+        uuid: String,
+        update_relay: UpdateRelay,
+    ) -> Result<Relay, Error> {
+        let db_relay: Relay = sqlx::query_as::<_, Relay>(
+            "UPDATE relays
+            SET name = $1, description = $2, write_whitelist = $3, read_whitelist = $4
+            WHERE uuid = $5
+            RETURNING *",
+        )
+        .bind(update_relay.name)
+        .bind(update_relay.description)
+        .bind(Json(update_relay.write_whitelist.clone())) // Using Json type to properly serialize the JSON data
+        .bind(Json(update_relay.read_whitelist.clone())) // Using Json type to properly serialize the JSON data
+        .bind(uuid.to_string())
+        .fetch_one(self.pool)
         .await?;
 
-    Ok(())
-}
-
-pub struct CreateRelay {
-    pub user_npub: String,
-    pub relay_order_uuid: String,
-    pub name: String,
-    pub description: String,
-    pub subdomain: String,
-    pub custom_domain: String,
-    pub instance_type: InstanceType,
-    pub instance_id: String,
-    pub instance_ip: String,
-    pub implementation: RelayImplementation,
-    pub cloud_provider: CloudProvider,
-    pub write_whitelist: serde_json::Value,
-    pub read_whitelist: serde_json::Value,
-    pub expires_at: NaiveDateTime,
-}
-
-pub async fn create_relay(pool: &PgPool, relay: CreateRelay) -> Result<Relay, Error> {
-    let uuid = Uuid::new_v4();
-    let db_relay: Relay = sqlx::query_as::<_, Relay>(
-        "INSERT INTO relays (uuid, user_npub, relay_order_uuid, name, description, subdomain, custom_domain, instance_type, instance_id, instance_ip, implementation, cloud_provider, write_whitelist, read_whitelist, created_at, updated_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::relay_instance_type, $9, $10, $11::relay_implementation, $12::relay_cloud_provider, $13, $14, $15, $16, $17)
-         RETURNING *",
-    )
-    .bind(uuid.to_string())
-    .bind(relay.user_npub.clone())
-    .bind(relay.relay_order_uuid)
-    .bind(relay.name.clone())
-    .bind(relay.description.clone())
-    .bind(relay.subdomain.clone())
-    .bind(relay.custom_domain.clone())
-    .bind(relay.instance_type)
-    .bind(relay.instance_id.clone())
-    .bind(relay.instance_ip.clone())
-    .bind(relay.implementation)
-    .bind(relay.cloud_provider)
-    .bind(Json(relay.write_whitelist.clone()))
-    .bind(Json(relay.read_whitelist.clone()))
-    .bind(chrono::Local::now().naive_utc())
-    .bind(chrono::Local::now().naive_utc())
-    .bind(relay.expires_at.clone())
-    .fetch_one(pool)
-    .await?;
-
-    Ok(Relay::from_db_relay(db_relay))
-}
-
-pub struct UpdateRelay {
-    pub name: String,
-    pub description: String,
-    pub write_whitelist: serde_json::Value,
-    pub read_whitelist: serde_json::Value,
-}
-
-pub async fn update_relay(
-    pool: &PgPool,
-    uuid: String,
-    update_relay: UpdateRelay,
-) -> Result<Relay, Error> {
-    let db_relay: Relay = sqlx::query_as::<_, Relay>(
-        "UPDATE relays
-         SET name = $1, description = $2, write_whitelist = $3, read_whitelist = $4
-         WHERE uuid = $5
-         RETURNING *",
-    )
-    .bind(update_relay.name)
-    .bind(update_relay.description)
-    .bind(Json(update_relay.write_whitelist.clone())) // Using Json type to properly serialize the JSON data
-    .bind(Json(update_relay.read_whitelist.clone())) // Using Json type to properly serialize the JSON data
-    .bind(uuid.to_string())
-    .fetch_one(pool)
-    .await?;
-
-    Ok(Relay::from_db_relay(db_relay))
+        Ok(Relay::from_db_relay(db_relay))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        repositories::user_repository::{create_user, delete_user},
-        util::generators::generate_random_string,
-    };
-
     use super::*;
+    use crate::{
+        repositories::{user_repository::UserRepository, relay_order_repository::RelayOrderRepository}, util::generators::generate_random_string, models::relay_orders::{RelayOrderStatus, CreateRelayOrder},
+    };
+    use serde_json::json;
 
     async fn create_test_pool() -> PgPool {
         dotenvy::dotenv().ok();
@@ -159,7 +145,8 @@ mod tests {
         let pool = create_test_pool().await;
         let user_npub = generate_random_string(16).await;
 
-        let user = create_user(&pool, &user_npub)
+        let user = UserRepository::new(&pool)
+            .create(&user_npub)
             .await
             .expect("Failed to create user");
 
@@ -167,11 +154,13 @@ mod tests {
     }
 
     async fn delete_test_user_and_relay(pool: &PgPool, npub: String, relay: Relay) {
-        delete_relay(&pool, relay.uuid)
+        RelayRepository::new(&pool)
+            .delete(relay.uuid)
             .await
             .expect("Failed to delete relay");
 
-        delete_user(&pool, &npub)
+        UserRepository::new(&pool)
+            .delete(&npub)
             .await
             .expect("Failed to delete user");
     }
@@ -184,10 +173,20 @@ mod tests {
         let relay_description = "This is a test relay";
         let user_npub = create_test_user().await;
 
+        let order = RelayOrderRepository::new(&pool).create(CreateRelayOrder {
+            user_npub: user_npub.clone(),
+            amount: 100,
+            cloud_provider: CloudProvider::AWS,
+            instance_type: InstanceType::AwsT2Nano,
+            implementation: RelayImplementation::Strfry,
+            hostname: "test.relaying.io".to_string(),
+            status: RelayOrderStatus::Pending,
+        }).await.expect("Failed to create relay order");
+
         // Test create_relay function
         let relay = CreateRelay {
             user_npub: user_npub.clone(),
-            relay_order_uuid: generate_random_string(10).await,
+            relay_order_uuid: order.uuid,
             name: relay_name.to_string(),
             description: relay_description.to_string(),
             subdomain: generate_random_string(10).await,
@@ -201,12 +200,14 @@ mod tests {
             read_whitelist: json!({"key": "value"}),
             expires_at: chrono::Local::now().naive_utc(),
         };
-        let created_relay = create_relay(&pool, relay)
+        let created_relay = RelayRepository::new(&pool)
+            .create(relay)
             .await
             .expect("Failed to create relay");
 
         // Test get_relay function
-        let retrieved_relay = get_relay(&pool, created_relay.uuid)
+        let retrieved_relay = RelayRepository::new(&pool)
+            .get_one(created_relay.uuid)
             .await
             .expect("Failed to retrieve relay");
         assert_eq!(retrieved_relay.name, relay_name);
@@ -222,10 +223,20 @@ mod tests {
         let relay_description = "This is a test relay";
         let relay_user_npub = create_test_user().await;
 
+        let order = RelayOrderRepository::new(&pool).create(CreateRelayOrder {
+            user_npub: relay_user_npub.clone(),
+            amount: 100,
+            cloud_provider: CloudProvider::AWS,
+            instance_type: InstanceType::AwsT2Nano,
+            implementation: RelayImplementation::Strfry,
+            hostname: "test.relaying.io".to_string(),
+            status: RelayOrderStatus::Pending,
+        }).await.expect("Failed to create relay order");
+
         // Create a relay to update
         let relay = CreateRelay {
             user_npub: relay_user_npub.clone(),
-            relay_order_uuid: generate_random_string(10).await,
+            relay_order_uuid: order.uuid,
             name: relay_name.to_string(),
             description: relay_description.to_string(),
             subdomain: generate_random_string(10).await,
@@ -239,7 +250,8 @@ mod tests {
             read_whitelist: json!({"key": "value"}),
             expires_at: chrono::Local::now().naive_utc(),
         };
-        let created_relay = create_relay(&pool, relay)
+        let created_relay = RelayRepository::new(&pool)
+            .create(relay)
             .await
             .expect("Failed to create relay");
 
@@ -256,7 +268,8 @@ mod tests {
             read_whitelist: updated_read_whitelist,
         };
 
-        let updated_relay = update_relay(&pool, created_relay.uuid, updated_relay)
+        let updated_relay = RelayRepository::new(&pool)
+            .update(created_relay.uuid, updated_relay)
             .await
             .expect("Failed to update relay");
 

@@ -1,9 +1,7 @@
-use std::fmt::{Display, Formatter};
-
+use super::cloud_provider::{CloudProvider, InstanceType};
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-
-use super::cloud_provider::{CloudProvider, InstanceType};
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Relay {
@@ -28,7 +26,6 @@ pub struct Relay {
 
 impl Relay {
     pub fn from_db_relay(relay: Relay) -> Self {
-
         Relay {
             uuid: relay.uuid,
             user_npub: relay.user_npub,
@@ -67,4 +64,28 @@ impl RelayImplementation {
             RelayImplementation::Nostream => "nostream",
         }
     }
+}
+
+pub struct CreateRelay {
+    pub user_npub: String,
+    pub relay_order_uuid: String,
+    pub name: String,
+    pub description: String,
+    pub subdomain: String,
+    pub custom_domain: String,
+    pub instance_type: InstanceType,
+    pub instance_id: String,
+    pub instance_ip: String,
+    pub implementation: RelayImplementation,
+    pub cloud_provider: CloudProvider,
+    pub write_whitelist: serde_json::Value,
+    pub read_whitelist: serde_json::Value,
+    pub expires_at: NaiveDateTime,
+}
+
+pub struct UpdateRelay {
+    pub name: String,
+    pub description: String,
+    pub write_whitelist: serde_json::Value,
+    pub read_whitelist: serde_json::Value,
 }

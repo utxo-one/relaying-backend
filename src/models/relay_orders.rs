@@ -1,7 +1,10 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
-use super::{cloud_provider::{CloudProvider, InstanceType}, relay::{RelayImplementation, Relay}};
+use super::{
+    cloud_provider::{CloudProvider, InstanceType},
+    relay::{Relay, RelayImplementation},
+};
 
 #[derive(Debug, Deserialize, Serialize, sqlx::Type)]
 #[sqlx(type_name = "relay_order_status", rename_all = "lowercase")]
@@ -20,7 +23,6 @@ impl RelayOrderStatus {
         }
     }
 }
-
 
 impl ToString for RelayOrderStatus {
     fn to_string(&self) -> String {

@@ -140,7 +140,10 @@ mod tests {
     use sqlx::PgPool;
 
     use super::*;
-    use crate::{util::generators::generate_random_string, models::{cloud_provider::InstanceType, relay::RelayImplementation}};
+    use crate::{
+        models::{cloud_provider::InstanceType, relay::RelayImplementation},
+        util::generators::generate_random_string,
+    };
 
     #[tokio::test]
     async fn test_launch_and_terminate_instance() {
