@@ -126,7 +126,11 @@ impl<'a> RelayRepository<'a> {
 mod tests {
     use super::*;
     use crate::{
-        repositories::{user_repository::UserRepository, relay_order_repository::RelayOrderRepository}, util::generators::generate_random_string, models::relay_orders::{RelayOrderStatus, CreateRelayOrder},
+        models::relay_orders::{CreateRelayOrder, RelayOrderStatus},
+        repositories::{
+            relay_order_repository::RelayOrderRepository, user_repository::UserRepository,
+        },
+        util::generators::generate_random_string,
     };
     use serde_json::json;
 
@@ -173,15 +177,18 @@ mod tests {
         let relay_description = "This is a test relay";
         let user_npub = create_test_user().await;
 
-        let order = RelayOrderRepository::new(&pool).create(CreateRelayOrder {
-            user_npub: user_npub.clone(),
-            amount: 100,
-            cloud_provider: CloudProvider::AWS,
-            instance_type: InstanceType::AwsT2Nano,
-            implementation: RelayImplementation::Strfry,
-            hostname: "test.relaying.io".to_string(),
-            status: RelayOrderStatus::Pending,
-        }).await.expect("Failed to create relay order");
+        let order = RelayOrderRepository::new(&pool)
+            .create(CreateRelayOrder {
+                user_npub: user_npub.clone(),
+                amount: 100,
+                cloud_provider: CloudProvider::AWS,
+                instance_type: InstanceType::AwsT2Nano,
+                implementation: RelayImplementation::Strfry,
+                hostname: "test.relaying.io".to_string(),
+                status: RelayOrderStatus::Pending,
+            })
+            .await
+            .expect("Failed to create relay order");
 
         // Test create_relay function
         let relay = CreateRelay {
@@ -223,15 +230,18 @@ mod tests {
         let relay_description = "This is a test relay";
         let relay_user_npub = create_test_user().await;
 
-        let order = RelayOrderRepository::new(&pool).create(CreateRelayOrder {
-            user_npub: relay_user_npub.clone(),
-            amount: 100,
-            cloud_provider: CloudProvider::AWS,
-            instance_type: InstanceType::AwsT2Nano,
-            implementation: RelayImplementation::Strfry,
-            hostname: "test.relaying.io".to_string(),
-            status: RelayOrderStatus::Pending,
-        }).await.expect("Failed to create relay order");
+        let order = RelayOrderRepository::new(&pool)
+            .create(CreateRelayOrder {
+                user_npub: relay_user_npub.clone(),
+                amount: 100,
+                cloud_provider: CloudProvider::AWS,
+                instance_type: InstanceType::AwsT2Nano,
+                implementation: RelayImplementation::Strfry,
+                hostname: "test.relaying.io".to_string(),
+                status: RelayOrderStatus::Pending,
+            })
+            .await
+            .expect("Failed to create relay order");
 
         // Create a relay to update
         let relay = CreateRelay {

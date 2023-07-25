@@ -4,12 +4,9 @@ use crate::{
     models::cloud_provider::LaunchCloudInstance,
     models::{
         cloud_provider::{CloudProvider, InstanceType},
-        relay::{Relay, RelayImplementation, CreateRelay},
+        relay::{CreateRelay, Relay, RelayImplementation},
     },
-    repositories::{
-        user_repository::UserRepository,
-        relay_repository::RelayRepository,
-    },
+    repositories::{relay_repository::RelayRepository, user_repository::UserRepository},
     services::aws_service::launch_instance,
     util::generators::generate_random_string,
 };
@@ -66,7 +63,8 @@ pub async fn create_relay_service(
                 expires_at: relay.expires_at,
             };
 
-            let relay = RelayRepository::new(&pool).create(create_relay)
+            let relay = RelayRepository::new(&pool)
+                .create(create_relay)
                 .await
                 .expect("Failed to create relay");
 
@@ -87,8 +85,7 @@ mod tests {
             relay_orders::{CreateRelayOrder, RelayOrderStatus},
         },
         repositories::{
-            self, relay_order_repository::RelayOrderRepository,
-            user_repository::UserRepository,
+            self, relay_order_repository::RelayOrderRepository, user_repository::UserRepository,
         },
         services::aws_service::terminate_instance,
     };
