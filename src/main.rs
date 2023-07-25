@@ -17,11 +17,9 @@ async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
     std::env::set_var("RUST_LOG", "actix_web=debug");
     env_logger::init();
-    // Load the DATABASE_URL environment variable
     let database_url =
         env::var("DATABASE_URL").expect("DATABASE_URL not found in environment variables.");
 
-    // Create the PostgreSQL pool
     let pool = PgPool::connect(&database_url)
         .await
         .expect("Failed to create PostgreSQL pool.");
@@ -30,7 +28,6 @@ async fn main() -> std::io::Result<()> {
     let relay_order_repo = Arc::new(relay_order::RelayOrderRepository::new(pool.clone()));
     let relay_repo = Arc::new(relay::RelayRepository::new(pool.clone()));
 
-    // Start the Actix Web server
     HttpServer::new(move || {
         App::new()
             .wrap(Cors::permissive())
