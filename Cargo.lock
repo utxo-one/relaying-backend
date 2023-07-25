@@ -1935,6 +1935,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "env_logger",
+ "futures",
  "hmac 0.12.1",
  "jsonwebtoken",
  "log",
