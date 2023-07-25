@@ -1,46 +1,16 @@
 use actix_cors::Cors;
-use actix_web::{http, web::Data, App, HttpServer};
-use middleware::cors_middleware::{self, cors_middleware};
+use actix_web::{web::Data, App, HttpServer};
 use sqlx::postgres::PgPool;
-use std::env;
+use std::{env, sync::Arc};
 
-mod handlers {
-    pub mod auth_handler;
-    pub mod handler;
-    pub mod relay_order_handler;
-    pub mod user_handler;
-}
-
-mod models {
-    pub mod cloud_provider;
-    pub mod jwt;
-    pub mod nostr;
-    pub mod relay;
-    pub mod relay_orders;
-    pub mod user;
-}
-
-mod repositories {
-    pub mod relay_order_repository;
-    pub mod relay_repository;
-    pub mod user_repository;
-}
-
-mod services {
-    pub mod aws_service;
-    pub mod jwt_service;
-    pub mod nostr_service;
-    pub mod relay_service;
-}
-
-mod middleware {
-    pub mod cors_middleware;
-    pub mod jwt_middleware;
-}
-
-mod util {
-    pub mod generators;
-}
+mod auth;
+mod aws;
+mod cloud_provider;
+mod middleware;
+mod relay;
+mod relay_order;
+mod user;
+mod util;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -56,18 +26,25 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to create PostgreSQL pool.");
 
+    let user_repo = Arc::new(user::UserRepository::new(pool.clone()));
+    let relay_order_repo = Arc::new(relay_order::RelayOrderRepository::new(pool.clone()));
+    let relay_repo = Arc::new(relay::RelayRepository::new(pool.clone()));
+
     // Start the Actix Web server
     HttpServer::new(move || {
         App::new()
             .wrap(Cors::permissive())
-            .app_data(Data::new(pool.clone())) // Share the pool across all routes
-            .configure(handlers::user_handler::configure_routes)
-            .configure(handlers::auth_handler::configure_routes)
-            .configure(handlers::relay_order_handler::configure_routes) // Mount the user handlers
+            .app_data(Data::new(pool.clone()))
+            .app_data(Data::new(user_repo.clone()))
+            .app_data(Data::new(relay_order_repo.clone()))
+            .app_data(Data::new(relay_repo.clone()))
+            .configure(user::configure_routes)
+            .configure(auth::configure_routes)
+            .configure(relay_order::configure_routes) // Mount the user handlers
     })
     .bind("127.0.0.1:8888")?
     .run()
-    .await;
+    .await?;
 
     Ok(())
 }

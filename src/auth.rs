@@ -1,22 +1,53 @@
-use actix_web::{web, App, Error, HttpRequest, HttpResponse};
-use base64::decode;
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use log::{error, info};
+use crate::util::ErrorResponse;
+use actix_web::{web, Error, HttpRequest, HttpResponse};
+use base64::{engine::general_purpose, Engine};
+use chrono::{TimeZone, Utc};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use nostr::{Event, Kind};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use url::Url;
 
-use crate::{
-    handlers::handler::ErrorResponse,
-    models::{
-        jwt::LoginResponse,
-        nostr::{NostrEvent, NostrNip98Event},
-    },
-    services::jwt_service::generate_token,
-};
+// -----------------------------------------------------------------------------
+// Models & DTOs
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    pub sub: String,
+    pub exp: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoginInfo {
+    pub npub: String, // Assuming "npub" is a string identifier like username or email
+}
+
+// LoginResponse represents the JSON response containing the token
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoginResponse {
+    pub token: String,
+}
 
 const SCHEME: &str = "Nostr";
+
+// -----------------------------------------------------------------------------
+// Functions
+// -----------------------------------------------------------------------------
+
+pub async fn generate_token(sub: &secp256k1::XOnlyPublicKey) -> Result<String, Error> {
+    let expiration = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(1))
+        .expect("Could not set expiration time.");
+
+    let claims = Claims {
+        sub: sub.to_string(),
+        exp: expiration.timestamp() as usize,
+    };
+
+    let secret = dotenvy::var("JWT_SECRET").unwrap();
+    let encoding_key = EncodingKey::from_secret(secret.as_ref());
+    encode(&Header::default(), &claims, &encoding_key)
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Failed to generate token"))
+}
 
 pub async fn validate_nip98(req: HttpRequest) -> Result<Event, actix_web::Error> {
     let auth_header = req.headers().get("Authorization");
@@ -35,7 +66,7 @@ pub async fn validate_nip98(req: HttpRequest) -> Result<Event, actix_web::Error>
 
     let token = auth[SCHEME.len()..].trim().to_string();
     println!("the unecoded token is: {}", token);
-    let b_token = match decode(&token) {
+    let b_token = match general_purpose::STANDARD.decode(&token) {
         Ok(token) => token,
         Err(error) => {
             println!("Failed to decode token. token: {}", error);
@@ -64,7 +95,7 @@ pub async fn validate_nip98(req: HttpRequest) -> Result<Event, actix_web::Error>
     };
 
     match ev.kind {
-        Kind => {
+        Kind::Ephemeral(27_235) => {
             println!("the event is a nip98 event");
         }
         _ => {
@@ -98,14 +129,23 @@ pub async fn validate_nip98(req: HttpRequest) -> Result<Event, actix_web::Error>
         ));
     }
 
-    let verified = ev.verify();
+    Ok(ev)
+}
 
-    match verified {
-        Ok(verified) => return Ok(ev),
-        Err(err) => {
-            return Err(actix_web::error::ErrorInternalServerError(
-                "Failed to verify event",
-            ))
-        }
+// -----------------------------------------------------------------------------
+// Handlers
+// -----------------------------------------------------------------------------
+
+async fn auth_handler(req: HttpRequest) -> Result<HttpResponse, Error> {
+    match validate_nip98(req).await {
+        Ok(ev) => match generate_token(&ev.pubkey).await {
+            Ok(token) => return Ok(HttpResponse::Ok().json(LoginResponse { token })),
+            Err(e) => return Err(actix_web::error::ErrorInternalServerError(e.to_string())),
+        },
+        Err(e) => return Err(actix_web::error::ErrorUnauthorized(e.to_string())),
     }
+}
+
+pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(web::resource("/login").route(web::post().to(auth_handler)));
 }
