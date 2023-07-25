@@ -1,9 +1,15 @@
+use actix_web::{web, HttpResponse, Responder};
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use sqlx::Error as SqlxError;
 use sqlx::PgPool;
 use std::fmt;
 
-use crate::models::relay_orders::{CreateRelayOrder, RelayOrder};
+use crate::{
+    cloud_provider::{CloudProvider, InstanceType},
+    relay::RelayImplementation,
+    util::{DataResponse, ErrorResponse},
+};
 
 #[derive(Debug)]
 pub enum RelayOrderRepositoryError {
@@ -26,12 +32,12 @@ impl fmt::Display for RelayOrderRepositoryError {
     }
 }
 
-pub struct RelayOrderRepository<'a> {
-    pub pool: &'a PgPool,
+pub struct RelayOrderRepository {
+    pub pool: PgPool,
 }
 
-impl<'a> RelayOrderRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self {
+impl RelayOrderRepository {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -54,7 +60,7 @@ impl<'a> RelayOrderRepository<'a> {
             .bind(relay_order.implementation.as_str())
             .bind(relay_order.hostname)
             .bind(relay_order.status)
-            .fetch_one(self.pool)
+            .fetch_one(&self.pool)
             .await?;
 
         Ok(relay_order)
@@ -68,7 +74,7 @@ impl<'a> RelayOrderRepository<'a> {
             WHERE uuid = $1
             ")
             .bind(uuid)
-            .fetch_one(self.pool)
+            .fetch_one(&self.pool)
             .await?;
 
         Ok(relay_order)
@@ -82,26 +88,114 @@ impl<'a> RelayOrderRepository<'a> {
             ",
         )
         .bind(uuid)
-        .execute(self.pool)
+        .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, sqlx::Type)]
+#[sqlx(type_name = "relay_order_status", rename_all = "lowercase")]
+pub enum RelayOrderStatus {
+    Pending,
+    Paid,
+    Redeemed,
+}
+
+impl RelayOrderStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelayOrderStatus::Pending => "pending",
+            RelayOrderStatus::Paid => "paid",
+            RelayOrderStatus::Redeemed => "redeemed",
+        }
+    }
+}
+
+impl ToString for RelayOrderStatus {
+    fn to_string(&self) -> String {
+        match &self {
+            RelayOrderStatus::Pending => "pending".to_string(),
+            RelayOrderStatus::Paid => "paid".to_string(),
+            RelayOrderStatus::Redeemed => "redeemed".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
+pub struct RelayOrder {
+    pub uuid: String,
+    pub user_npub: String,
+    pub amount: i32,
+    pub cloud_provider: CloudProvider,
+    pub instance_type: InstanceType,
+    pub implementation: RelayImplementation,
+    pub hostname: String,
+    pub status: RelayOrderStatus,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+impl RelayOrder {
+    pub fn from_db_relay_order(relay_order: RelayOrder) -> Self {
+        RelayOrder {
+            uuid: relay_order.uuid,
+            user_npub: relay_order.user_npub,
+            amount: relay_order.amount,
+            cloud_provider: relay_order.cloud_provider,
+            instance_type: relay_order.instance_type,
+            implementation: relay_order.implementation,
+            hostname: relay_order.hostname,
+            status: relay_order.status,
+            created_at: relay_order.created_at,
+            updated_at: relay_order.updated_at,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CreateRelayOrder {
+    pub user_npub: String,
+    pub amount: i32,
+    pub cloud_provider: CloudProvider,
+    pub instance_type: InstanceType,
+    pub implementation: RelayImplementation,
+    pub hostname: String,
+    pub status: RelayOrderStatus,
+}
+
+async fn create_relay_order_handler(
+    pool: web::Data<PgPool>,
+    relay_order_repo: web::Data<RelayOrderRepository>,
+    data: web::Json<CreateRelayOrder>,
+) -> impl Responder {
+    let order = relay_order_repo.create(data.into_inner()).await;
+
+    match order {
+        Ok(order) => HttpResponse::Created().json(DataResponse::new(order)),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse::new(e.to_string())),
+    }
+}
+
+pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(web::resource("/relay_orders").route(web::post().to(create_relay_order_handler)));
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{
-        models::{
-            cloud_provider::{CloudProvider, InstanceType},
-            relay::RelayImplementation,
-            relay_orders::RelayOrderStatus,
-        },
-        repositories::user_repository::UserRepository,
-        util::generators::generate_random_string,
+    use super::RelayOrderRepository;
+    use crate::relay_order::{
+        create_relay_order_handler, CreateRelayOrder, RelayOrder, RelayOrderStatus,
     };
-
-    use super::*;
+    use crate::{
+        cloud_provider::{CloudProvider, InstanceType},
+        relay::RelayImplementation,
+        user::UserRepository,
+        util::{generate_random_string, DataResponse},
+    };
+    use actix_web::{web::Data, App};
+    use sqlx::PgPool;
 
     async fn create_test_pool() -> PgPool {
         dotenvy::dotenv().ok();
@@ -117,7 +211,7 @@ mod tests {
     async fn create_test_user(pool: &PgPool) -> String {
         let user_npub = generate_random_string(16).await;
 
-        let user = UserRepository::new(&pool)
+        let user = UserRepository::new(pool.clone())
             .create(&user_npub)
             .await
             .expect("Failed to create user");
@@ -126,14 +220,14 @@ mod tests {
     }
 
     async fn delete_test_relay_order(pool: &PgPool, uuid: String) {
-        RelayOrderRepository::new(&pool)
+        RelayOrderRepository::new(pool.clone())
             .delete(uuid)
             .await
             .expect("Failed to delete relay order");
     }
 
     async fn delete_test_user(pool: &PgPool, npub: String) {
-        UserRepository::new(&pool)
+        UserRepository::new(pool.clone())
             .delete(&npub)
             .await
             .expect("Failed to delete user");
@@ -154,7 +248,7 @@ mod tests {
             status: RelayOrderStatus::Pending,
         };
 
-        let repo = RelayOrderRepository::new(&pool);
+        let repo = RelayOrderRepository::new(pool.clone());
         let relay_order = repo
             .create(create)
             .await
@@ -185,7 +279,7 @@ mod tests {
             status: RelayOrderStatus::Pending,
         };
 
-        let repo = RelayOrderRepository::new(&pool);
+        let repo = RelayOrderRepository::new(pool.clone());
 
         let relay_order = repo
             .create(create)
@@ -199,7 +293,47 @@ mod tests {
 
         assert_eq!(relay_order.user_npub, npub);
 
-        delete_test_user(&pool, npub).await;
+        delete_test_user(&pool.clone(), npub).await;
         delete_test_relay_order(&pool, relay_order.uuid).await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_relay_order() {
+        let pool = create_test_pool().await;
+        let user_npub = create_test_user(&pool).await;
+        let order: CreateRelayOrder = CreateRelayOrder {
+            user_npub: user_npub.clone(),
+            amount: 1000,
+            cloud_provider: CloudProvider::AWS,
+            instance_type: InstanceType::AwsT2Nano,
+            implementation: RelayImplementation::Strfry,
+            hostname: "test".to_string(),
+            status: RelayOrderStatus::Pending,
+        };
+
+        let repo = RelayOrderRepository::new(pool.clone());
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(Data::new(pool.clone()))
+                .app_data(Data::new(repo))
+                .route(
+                    "/relay_orders",
+                    actix_web::web::post().to(create_relay_order_handler),
+                ),
+        )
+        .await;
+        let req = actix_web::test::TestRequest::post()
+            .uri("/relay_orders")
+            .set_json(&order)
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), 201);
+        let response: DataResponse<RelayOrder> = actix_web::test::read_body_json(resp).await;
+        assert_eq!(response.data.user_npub, user_npub);
+
+        delete_test_user(&pool, user_npub).await;
+        delete_test_relay_order(&pool, response.data.uuid).await;
     }
 }

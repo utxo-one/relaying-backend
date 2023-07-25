@@ -1,20 +1,56 @@
-use crate::models::user::User;
+use actix_web::{web, HttpResponse, Responder};
 use chrono::NaiveDateTime;
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPool;
+use sqlx::FromRow;
 
-pub struct UserRepository<'a> {
-    pub pool: &'a PgPool,
+use crate::util::{DataResponse, ErrorResponse};
+
+// -----------------------------------------------------------------------------
+// Models & DTOs
+// -----------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, FromRow, Clone)]
+pub struct User {
+    pub npub: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub deleted_at: Option<NaiveDateTime>,
 }
 
-impl<'a> UserRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self {
+impl User {
+    pub fn from_db_user(db_user: User) -> Self {
+        User {
+            npub: db_user.npub,
+            created_at: db_user.created_at,
+            updated_at: db_user.updated_at,
+            deleted_at: db_user.deleted_at,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CreateUserDto {
+    pub npub: String,
+}
+
+// -----------------------------------------------------------------------------
+// Repository
+// -----------------------------------------------------------------------------
+
+pub struct UserRepository {
+    pub pool: PgPool,
+}
+
+impl UserRepository {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
     pub async fn get_one(&self, user_npub: &str) -> Option<User> {
         let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE npub = $1")
             .bind(user_npub)
-            .fetch_optional(self.pool)
+            .fetch_optional(&self.pool)
             .await;
 
         match user {
@@ -25,7 +61,7 @@ impl<'a> UserRepository<'a> {
 
     pub async fn get_all(&self) -> Vec<User> {
         let db_users = sqlx::query_as::<_, User>("SELECT * FROM users")
-            .fetch_all(self.pool)
+            .fetch_all(&self.pool)
             .await
             .unwrap();
 
@@ -36,7 +72,7 @@ impl<'a> UserRepository<'a> {
         let db_user: User =
             sqlx::query_as::<_, User>("INSERT INTO users (npub) VALUES ($1) RETURNING *")
                 .bind(user_npub)
-                .fetch_one(self.pool)
+                .fetch_one(&self.pool)
                 .await?;
 
         Ok(User::from_db_user(db_user))
@@ -46,7 +82,7 @@ impl<'a> UserRepository<'a> {
         sqlx::query("UPDATE users SET deleted_at = $1 WHERE npub = $2")
             .bind(NaiveDateTime::from_timestamp_opt(0, 0))
             .bind(user_npub)
-            .execute(self.pool)
+            .execute(&self.pool)
             .await?;
 
         Ok(())
@@ -55,7 +91,7 @@ impl<'a> UserRepository<'a> {
     pub async fn user_exists(&self, user_npub: String) -> bool {
         let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE npub = $1")
             .bind(user_npub)
-            .fetch_optional(self.pool)
+            .fetch_optional(&self.pool)
             .await;
 
         match user {
@@ -65,9 +101,67 @@ impl<'a> UserRepository<'a> {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Handlers
+// -----------------------------------------------------------------------------
+
+async fn get_user_handler(
+    user_repo: web::Data<UserRepository>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let user = user_repo.get_one(&path).await;
+    match user {
+        Some(user) => HttpResponse::Ok().json(user),
+        None => HttpResponse::NotFound().finish(),
+    }
+}
+
+async fn get_all_users_handler(user_repo: web::Data<UserRepository>) -> impl Responder {
+    let users = user_repo.get_all().await;
+    HttpResponse::Ok().json(DataResponse::new(users))
+}
+
+async fn create_user_handler(
+    user_repo: web::Data<UserRepository>,
+    user: web::Json<CreateUserDto>,
+) -> impl Responder {
+    match user_repo.create(&user.npub).await {
+        Ok(created_user) => HttpResponse::Created().json(DataResponse::new(created_user)),
+        Err(_) => {
+            HttpResponse::BadRequest().json(ErrorResponse::new("Npub already exists".to_string()))
+        }
+    }
+}
+
+async fn delete_user_handler(
+    user_repo: web::Data<UserRepository>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let user_npub = path.into_inner();
+    match user_repo.delete(&user_npub).await {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::resource("/users/{user_npub}")
+            .route(web::get().to(get_user_handler))
+            .route(web::delete().to(delete_user_handler)),
+    )
+    .route("/users", web::get().to(get_all_users_handler))
+    .route("/users", web::post().to(create_user_handler));
+}
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
-    use crate::util::generators::generate_random_string;
+
+    use crate::util::generate_random_string;
 
     use super::*;
     use std::env;
@@ -97,13 +191,13 @@ mod tests {
         let pool = create_test_pool().await;
         let user_npub = generate_random_string(16).await;
 
-        let created_user = UserRepository::new(&pool)
+        let created_user = UserRepository::new(pool.clone())
             .create(user_npub.as_str())
             .await
             .expect("Failed to create user");
         assert_eq!(created_user.npub, user_npub);
 
-        let retrieved_user = UserRepository::new(&pool)
+        let retrieved_user = UserRepository::new(pool.clone())
             .get_one(user_npub.as_str())
             .await
             .expect("Failed to retrieve user");
@@ -116,7 +210,7 @@ mod tests {
         clean_up_data(&pool).await;
 
         let user_npub = generate_random_string(16).await;
-        let repo = UserRepository::new(&pool);
+        let repo = UserRepository::new(pool);
         let created_user = repo
             .create(user_npub.as_str())
             .await
@@ -137,17 +231,17 @@ mod tests {
 
         clean_up_data(&pool).await;
 
-        let created_user = UserRepository::new(&pool)
+        let created_user = UserRepository::new(pool.clone())
             .create(user_npub.as_str())
             .await
             .expect("Failed to create user");
 
-        UserRepository::new(&pool)
+        UserRepository::new(pool.clone())
             .delete(user_npub.as_str())
             .await
             .expect("Failed to delete user");
 
-        let retrieved_user = UserRepository::new(&pool)
+        let retrieved_user = UserRepository::new(pool.clone())
             .get_one(user_npub.as_str())
             .await
             .expect("Failed to retrieve user");
