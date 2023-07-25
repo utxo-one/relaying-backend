@@ -24,9 +24,9 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to create PostgreSQL pool.");
 
-    let user_repo = Arc::new(user::UserRepository::new(pool.clone()));
-    let relay_order_repo = Arc::new(relay_order::RelayOrderRepository::new(pool.clone()));
-    let relay_repo = Arc::new(relay::RelayRepository::new(pool.clone()));
+    let user_repo = user::UserRepository::new(pool.clone());
+    let relay_order_repo = relay_order::RelayOrderRepository::new(pool.clone());
+    let relay_repo = relay::RelayRepository::new(pool.clone());
 
     HttpServer::new(move || {
         App::new()

@@ -1,8 +1,8 @@
 use actix_web::{web, HttpResponse, Responder};
 use chrono::NaiveDateTime;
-use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use serde::{Deserialize, Serialize};
 
 use crate::util::{DataResponse, ErrorResponse};
 
@@ -38,6 +38,7 @@ struct CreateUserDto {
 // Repository
 // -----------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct UserRepository {
     pub pool: PgPool,
 }
@@ -105,10 +106,7 @@ impl UserRepository {
 // Handlers
 // -----------------------------------------------------------------------------
 
-async fn get_user_handler(
-    user_repo: web::Data<UserRepository>,
-    path: web::Path<String>,
-) -> impl Responder {
+async fn get_user_handler(user_repo: web::Data<UserRepository>, path: web::Path<String>) -> impl Responder {
     let user = user_repo.get_one(&path).await;
     match user {
         Some(user) => HttpResponse::Ok().json(user),
@@ -133,10 +131,7 @@ async fn create_user_handler(
     }
 }
 
-async fn delete_user_handler(
-    user_repo: web::Data<UserRepository>,
-    path: web::Path<String>,
-) -> impl Responder {
+async fn delete_user_handler(user_repo: web::Data<UserRepository>, path: web::Path<String>) -> impl Responder {
     let user_npub = path.into_inner();
     match user_repo.delete(&user_npub).await {
         Ok(_) => HttpResponse::NoContent().finish(),
@@ -157,6 +152,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 // -----------------------------------------------------------------------------
 // Tests
 // -----------------------------------------------------------------------------
+
 
 #[cfg(test)]
 mod tests {

@@ -1,10 +1,15 @@
+use actix_web::HttpRequest;
 use actix_web::{web, HttpResponse, Responder};
 use chrono::NaiveDateTime;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::Sha256;
 use sqlx::Error as SqlxError;
 use sqlx::PgPool;
 use std::fmt;
 
+use crate::relay_order;
 use crate::{
     cloud_provider::{CloudProvider, InstanceType},
     relay::RelayImplementation,
@@ -32,6 +37,7 @@ impl fmt::Display for RelayOrderRepositoryError {
     }
 }
 
+#[derive(Clone)]
 pub struct RelayOrderRepository {
     pub pool: PgPool,
 }
@@ -90,6 +96,29 @@ impl RelayOrderRepository {
         .bind(uuid)
         .execute(&self.pool)
         .await?;
+
+        Ok(())
+    }
+
+    pub async fn update_status(
+        &self,
+        uuid: &str,
+        status: RelayOrderStatus,
+    ) -> Result<(), RelayOrderRepositoryError> {
+        let query = sqlx::query(
+            "
+            UPDATE relay_orders
+            SET status = $1::relay_order_status
+            WHERE uuid = $2
+            ",
+        )
+        .bind(&status)
+        .bind(&uuid)
+        .execute(&self.pool)
+        .await?;
+
+        eprintln!("Query: {:?}", query);
+        eprintln!("UUID: {}, Status: {}", &uuid, &status.to_string());
 
         Ok(())
     }
@@ -166,7 +195,6 @@ pub struct CreateRelayOrder {
 }
 
 async fn create_relay_order_handler(
-    pool: web::Data<PgPool>,
     relay_order_repo: web::Data<RelayOrderRepository>,
     data: web::Json<CreateRelayOrder>,
 ) -> impl Responder {
@@ -178,15 +206,107 @@ async fn create_relay_order_handler(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct Payload {
+    status: String,
+    amount: f64,
+    uuid: String,
+    metadata: Metadata,
+}
+
+#[derive(Debug, Deserialize)]
+struct Metadata {
+    npub: String,
+    order_uuid: String,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonResponse {
+    message: String,
+}
+
+pub async fn nodeless_webhook_handler(
+    req: HttpRequest,
+    relay_order_repo: web::Data<RelayOrderRepository>,
+    payload: web::Bytes,
+) -> impl Responder {
+    let payload: Value = match serde_json::from_slice(&payload) {
+        Ok(payload) => payload,
+        Err(err) => {
+            eprintln!("Could not parse the JSON payload from Nodeless: {}", err);
+            return HttpResponse::InternalServerError().body("Could not parse JSON payload");
+        }
+    };
+
+    let headers = req.headers();
+    let sig = headers
+        .get("nodeless-signature")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+
+    let secret = dotenvy::var("NODELESS_WEBHOOK_SECRET").unwrap().to_string();
+
+    let json_bytes = serde_json::to_vec(&payload).expect("Failed to serialize payload to JSON");
+
+    let expected_signature = calculate_hmac_sha256(&json_bytes, &secret);
+
+    if sig != &expected_signature {
+        eprintln!(
+            "Invalid Signature. Expected: {}, Received: {}, Payload: {}",
+            expected_signature, sig, payload
+        );
+        return HttpResponse::Unauthorized().body("HMAC signature verification failed");
+    }
+
+    let status = payload["status"].as_str().unwrap_or_default();
+    if status == "paid" || status == "overpaid" {
+        eprintln!("Webhook received successfully. Order uuid: {}.", payload["metadata"]["order_uuid"].to_string());
+        let order = relay_order_repo
+            .update_status(
+                payload["metadata"]["order_uuid"].as_str().unwrap(),
+                RelayOrderStatus::Paid,
+            )
+            .await;
+
+        match order {
+            Ok(_) => HttpResponse::Ok().body("Order status updated successfully"),
+            Err(e) => {
+                eprintln!("Failed to update relay order status: {}", e);
+                HttpResponse::InternalServerError().body("Failed to update relay order status")
+            }
+        }
+    } else {
+        eprintln!("Invalid Nodeless payment notification message received - status is not paid or overpaid.");
+        HttpResponse::BadRequest().body("Invalid Nodeless payment notification message received - status is not paid or overpaid.")
+    }
+}
+
+fn calculate_hmac_sha256(payload: &[u8], secret: &str) -> String {
+    type HmacSha256 = Hmac<Sha256>;
+
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    mac.update(payload);
+    let result = mac.finalize();
+    let bytes = result.into_bytes();
+    bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>()
+}
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::resource("/relay_orders").route(web::post().to(create_relay_order_handler)));
+    cfg.service(web::resource("/relay_orders").route(web::post().to(create_relay_order_handler)))
+        .service(
+            web::resource("/nodeless_webhook").route(web::post().to(nodeless_webhook_handler)),
+        );
 }
 
 #[cfg(test)]
 mod tests {
     use super::RelayOrderRepository;
     use crate::relay_order::{
-        create_relay_order_handler, CreateRelayOrder, RelayOrder, RelayOrderStatus,
+        create_relay_order_handler, nodeless_webhook_handler, CreateRelayOrder, RelayOrder,
+        RelayOrderStatus,
     };
     use crate::{
         cloud_provider::{CloudProvider, InstanceType},
@@ -231,6 +351,17 @@ mod tests {
             .delete(&npub)
             .await
             .expect("Failed to delete user");
+    }
+
+    #[tokio::test]
+    async fn test_calculate_hmac_sha256() {
+        let payload = "test".as_bytes();
+        let secret = "test";
+        let expected_hash = "88cd2108b5347d973cf39cdf9053d7dd42704876d8c9a9bd8e2d168259d3ddf7";
+
+        let hash = super::calculate_hmac_sha256(payload, secret);
+
+        assert_eq!(hash, expected_hash);
     }
 
     #[tokio::test]

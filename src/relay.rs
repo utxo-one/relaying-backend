@@ -112,6 +112,7 @@ pub struct CreateRelayService {
     pub expires_at: chrono::NaiveDateTime,
 }
 
+#[derive(Clone)]
 pub struct RelayRepository {
     pub pool: PgPool,
 }
