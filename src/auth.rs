@@ -1,9 +1,11 @@
 use crate::util::ErrorResponse;
-use actix_web::{web, Error, HttpRequest, HttpResponse};
+use actix_web::{web, Error, FromRequest, HttpRequest, HttpResponse};
 use base64::{engine::general_purpose, Engine};
 use chrono::{TimeZone, Utc};
+use futures::future::{ready, Ready};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use nostr::{Event, Kind};
+use secp256k1::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 
 // -----------------------------------------------------------------------------
@@ -33,7 +35,7 @@ const SCHEME: &str = "Nostr";
 // Functions
 // -----------------------------------------------------------------------------
 
-pub async fn generate_token(sub: &secp256k1::XOnlyPublicKey) -> Result<String, Error> {
+pub fn generate_token(sub: &secp256k1::XOnlyPublicKey) -> Result<String, Error> {
     let expiration = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::hours(1))
         .expect("Could not set expiration time.");
@@ -49,7 +51,7 @@ pub async fn generate_token(sub: &secp256k1::XOnlyPublicKey) -> Result<String, E
         .map_err(|_| actix_web::error::ErrorInternalServerError("Failed to generate token"))
 }
 
-pub async fn validate_nip98(req: HttpRequest) -> Result<Event, actix_web::Error> {
+pub fn validate_nip98(req: &HttpRequest) -> Result<Event, actix_web::Error> {
     let auth_header = req.headers().get("Authorization");
     if auth_header.is_none() {
         return Err(actix_web::error::ErrorInternalServerError(
@@ -136,16 +138,27 @@ pub async fn validate_nip98(req: HttpRequest) -> Result<Event, actix_web::Error>
 // Handlers
 // -----------------------------------------------------------------------------
 
-async fn auth_handler(req: HttpRequest) -> Result<HttpResponse, Error> {
-    match validate_nip98(req).await {
-        Ok(ev) => match generate_token(&ev.pubkey).await {
-            Ok(token) => return Ok(HttpResponse::Ok().json(LoginResponse { token })),
-            Err(e) => return Err(actix_web::error::ErrorInternalServerError(e.to_string())),
-        },
-        Err(e) => return Err(actix_web::error::ErrorUnauthorized(e.to_string())),
+async fn auth_handler(Nip98PubKey(pubkey): Nip98PubKey) -> Result<HttpResponse, Error> {
+    match generate_token(&pubkey) {
+        Ok(token) => Ok(HttpResponse::Ok().json(LoginResponse { token })),
+        Err(e) => Err(actix_web::error::ErrorInternalServerError(e.to_string())),
     }
 }
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(web::resource("/login").route(web::post().to(auth_handler)));
+}
+
+// -----------------------------------------------------------------------------
+// Extractor
+// -----------------------------------------------------------------------------
+pub struct Nip98PubKey(XOnlyPublicKey);
+
+impl FromRequest for Nip98PubKey {
+    type Error = actix_web::Error;
+    type Future = Ready<Result<Self, Self::Error>>;
+
+    fn from_request(req: &HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
+        ready(validate_nip98(req).map(|e| Nip98PubKey(e.pubkey)))
+    }
 }
