@@ -73,7 +73,7 @@ impl RelayOrderRepository {
         Ok(relay_order)
     }
 
-    pub async fn get_one(&self, uuid: String) -> Result<RelayOrder, RelayOrderRepositoryError> {
+    pub async fn get_one(&self, uuid: &String) -> Result<RelayOrder, RelayOrderRepositoryError> {
         let relay_order: RelayOrder = sqlx::query_as::<_, RelayOrder>(
             "
             SELECT uuid, user_npub, amount, cloud_provider, instance_type, implementation, hostname, status, created_at, updated_at
@@ -100,7 +100,7 @@ impl RelayOrderRepository {
         Ok(relay_orders)
     }
 
-    pub async fn delete(&self, uuid: String) -> Result<(), RelayOrderRepositoryError> {
+    pub async fn delete(&self, uuid: &String) -> Result<(), RelayOrderRepositoryError> {
         sqlx::query(
             "
             DELETE FROM relay_orders
@@ -261,7 +261,10 @@ pub async fn nodeless_webhook_handler(
 
     let status = payload["status"].as_str().unwrap_or_default();
     if status == "paid" || status == "overpaid" {
-        eprintln!("Webhook received successfully. Order uuid: {}.", payload["metadata"]["order_uuid"].to_string());
+        eprintln!(
+            "Webhook received successfully. Order uuid: {}.",
+            payload["metadata"]["order_uuid"].to_string()
+        );
         let order = relay_order_repo
             .update_status(
                 payload["metadata"]["order_uuid"].as_str().unwrap(),
@@ -305,10 +308,13 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 #[cfg(test)]
 mod tests {
     use super::RelayOrderRepository;
+    use crate::auth::generate_jwt_by_hex;
+    use crate::relay;
     use crate::relay_order::{
         create_relay_order_handler, nodeless_webhook_handler, CreateRelayOrder, RelayOrder,
         RelayOrderStatus,
     };
+    use crate::util::TestUtils;
     use crate::{
         cloud_provider::{CloudProvider, InstanceType},
         relay::RelayImplementation,
@@ -317,42 +323,6 @@ mod tests {
     };
     use actix_web::{web::Data, App};
     use sqlx::PgPool;
-
-    async fn create_test_pool() -> PgPool {
-        dotenvy::dotenv().ok();
-
-        let db_url =
-            dotenvy::var("DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
-        let pool = PgPool::connect(&db_url)
-            .await
-            .expect("Failed to create test pool");
-        pool
-    }
-
-    async fn create_test_user(pool: &PgPool) -> String {
-        let user_npub = generate_random_string(16).await;
-
-        let user = UserRepository::new(pool.clone())
-            .create(&user_npub)
-            .await
-            .expect("Failed to create user");
-
-        user.npub
-    }
-
-    async fn delete_test_relay_order(pool: &PgPool, uuid: String) {
-        RelayOrderRepository::new(pool.clone())
-            .delete(uuid)
-            .await
-            .expect("Failed to delete relay order");
-    }
-
-    async fn delete_test_user(pool: &PgPool, npub: String) {
-        UserRepository::new(pool.clone())
-            .delete(&npub)
-            .await
-            .expect("Failed to delete user");
-    }
 
     #[tokio::test]
     async fn test_calculate_hmac_sha256() {
@@ -366,9 +336,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_and_delete_relay_order() {
-        let pool = create_test_pool().await;
-        let npub = create_test_user(&pool).await;
+    async fn test_create_get_delete_relay_order() {
+        let test_utils = TestUtils::new().await;
+        let npub = test_utils.create_user().await.npub;
 
         let create = CreateRelayOrder {
             user_npub: npub.clone(),
@@ -380,7 +350,7 @@ mod tests {
             status: RelayOrderStatus::Pending,
         };
 
-        let repo = RelayOrderRepository::new(pool.clone());
+        let repo = test_utils.relay_order_repo.clone();
         let relay_order = repo
             .create(create)
             .await
@@ -388,66 +358,33 @@ mod tests {
 
         assert_eq!(relay_order.user_npub, npub);
 
-        delete_test_user(&pool, npub).await;
-        delete_test_relay_order(&pool, relay_order.uuid.clone()).await;
-
-        repo.get_one(relay_order.uuid)
-            .await
-            .expect_err("Failed to delete relay order");
-    }
-
-    #[tokio::test]
-    async fn test_get_relay_order() {
-        let pool = create_test_pool().await;
-        let npub = create_test_user(&pool).await;
-
-        let create = CreateRelayOrder {
-            user_npub: npub.clone(),
-            amount: 1,
-            cloud_provider: CloudProvider::AWS,
-            instance_type: InstanceType::AwsT2Nano,
-            implementation: RelayImplementation::Strfry,
-            hostname: "test".to_string(),
-            status: RelayOrderStatus::Pending,
-        };
-
-        let repo = RelayOrderRepository::new(pool.clone());
-
         let relay_order = repo
-            .create(create)
-            .await
-            .expect("Failed to create relay order");
-
-        let relay_order = repo
-            .get_one(relay_order.uuid)
+            .get_one(&relay_order.uuid)
             .await
             .expect("Failed to get relay order");
 
         assert_eq!(relay_order.user_npub, npub);
 
-        delete_test_user(&pool.clone(), npub).await;
-        delete_test_relay_order(&pool, relay_order.uuid).await;
+        repo.delete(&relay_order.uuid).await;
+
+        repo.get_one(&relay_order.uuid)
+            .await
+            .expect_err("Failed to delete relay order");
+
+        test_utils.revert_migrations().await;
     }
 
     #[tokio::test]
     async fn test_handle_create_relay_order() {
-        let pool = create_test_pool().await;
-        let user_npub = create_test_user(&pool).await;
-        let order: CreateRelayOrder = CreateRelayOrder {
-            user_npub: user_npub.clone(),
-            amount: 1000,
-            cloud_provider: CloudProvider::AWS,
-            instance_type: InstanceType::AwsT2Nano,
-            implementation: RelayImplementation::Strfry,
-            hostname: "test".to_string(),
-            status: RelayOrderStatus::Pending,
-        };
+        let test_utils = TestUtils::new().await;
+        let user = test_utils.create_user().await;
+        let order = test_utils.create_relay_order(&user.npub.as_str());
 
-        let repo = RelayOrderRepository::new(pool.clone());
-
+        let repo = RelayOrderRepository::new(test_utils.pool.clone());
+        let jwt_token = generate_jwt_by_hex(user.hexpub.as_str()).unwrap();
         let app = actix_web::test::init_service(
             App::new()
-                .app_data(Data::new(pool.clone()))
+                .app_data(Data::new(test_utils.pool.clone()))
                 .app_data(Data::new(repo))
                 .route(
                     "/relay_orders",
@@ -457,15 +394,15 @@ mod tests {
         .await;
         let req = actix_web::test::TestRequest::post()
             .uri("/relay_orders")
-            .set_json(&order)
+            .insert_header(("Authorization", jwt_token))
+            .set_json(&order.await)
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
 
         assert_eq!(resp.status(), 201);
         let response: DataResponse<RelayOrder> = actix_web::test::read_body_json(resp).await;
-        assert_eq!(response.data.user_npub, user_npub);
+        assert_eq!(response.data.user_npub, user.npub);
 
-        delete_test_user(&pool, user_npub).await;
-        delete_test_relay_order(&pool, response.data.uuid).await;
+        test_utils.revert_migrations().await;
     }
 }

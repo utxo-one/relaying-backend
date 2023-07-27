@@ -123,7 +123,7 @@ impl RelayRepository {
         Self { pool }
     }
 
-    pub async fn get_one(self: &Self, uuid: String) -> Option<Relay> {
+    pub async fn get_one(self: &Self, uuid: &String) -> Option<Relay> {
         let relay = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE uuid = $1")
             .bind(uuid)
             .fetch_optional(&self.pool)
@@ -171,7 +171,7 @@ impl RelayRepository {
         }
     }
 
-    pub async fn delete(self: &Self, uuid: String) -> Result<(), sqlx::Error> {
+    pub async fn delete(self: &Self, uuid: &String) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM relays WHERE uuid = $1")
             .bind(uuid)
             .execute(&self.pool)
@@ -300,7 +300,7 @@ pub async fn get_relay_handler(
     relay_repo: web::Data<RelayRepository>,
     path: web::Path<String>,
 ) -> impl Responder {
-    let relay = relay_repo.get_one(path.into_inner()).await;
+    let relay = relay_repo.get_one(&path.into_inner()).await;
 
     match relay {
         Some(relay) => HttpResponse::Ok().json(relay),
@@ -313,44 +313,18 @@ mod tests {
     use crate::{
         cloud_provider::terminate_instance,
         relay_order::{CreateRelayOrder, RelayOrderRepository, RelayOrderStatus},
-        util::generate_random_string,
+        util::{generate_random_string, TestUtils},
     };
 
     use super::*;
     use serde_json::json;
 
-    async fn create_test_pool() -> PgPool {
-        dotenvy::dotenv().ok();
-
-        let db_url =
-            dotenvy::var("DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
-        let pool = PgPool::connect(&db_url)
-            .await
-            .expect("Failed to create test pool");
-
-        pool
-    }
-
     #[tokio::test]
     pub async fn test_create_relay_service() {
-        let pool = create_test_pool().await;
-        let npub = generate_random_string(16).await;
-        let user = UserRepository::new(pool.clone()).create(&npub).await;
+        let test_utils = TestUtils::new().await;
+        let user = test_utils.create_user().await;
+        let order = test_utils.create_relay_order(&user.npub.as_str()).await;
 
-        let order = RelayOrderRepository::new(pool.clone())
-            .create(CreateRelayOrder {
-                user_npub: user.unwrap().npub.clone(),
-                amount: 100,
-                cloud_provider: CloudProvider::AWS,
-                instance_type: InstanceType::AwsT2Nano,
-                implementation: RelayImplementation::Strfry,
-                hostname: "test.relaying.io".to_string(),
-                status: RelayOrderStatus::Pending,
-            })
-            .await
-            .expect("Failed to create relay order");
-
-        let user_npub = &npub;
         let name = "Test Relay".to_string();
         let description = "This is a test relay".to_string();
         let instance_type = InstanceType::AwsT2Nano;
@@ -361,7 +335,7 @@ mod tests {
         let expires_at = chrono::Local::now().naive_utc();
 
         let create_relay = CreateRelayService {
-            user_npub: user_npub.clone(),
+            user_npub: user.npub.clone(),
             relay_order_uuid: order.uuid.clone(),
             name: name.clone(),
             description: description.clone(),
@@ -375,7 +349,7 @@ mod tests {
             expires_at: expires_at.clone(),
         };
 
-        let relay = create_relay_service(&pool, create_relay)
+        let relay = create_relay_service(&test_utils.pool, create_relay)
             .await
             .expect("Failed to create relay");
 
@@ -387,154 +361,48 @@ mod tests {
         let terminate_instance = terminate_instance(&relay.instance_id).await;
         assert!(terminate_instance.is_ok());
 
-        let delete_relay = RelayRepository::new(pool.clone()).delete(relay.uuid).await;
-        assert!(delete_relay.is_ok());
-
-        let delete_user = UserRepository::new(pool.clone()).delete(&user_npub).await;
-        assert!(delete_user.is_ok());
-    }
-
-    async fn create_test_user() -> String {
-        let pool = create_test_pool().await;
-        let user_npub = generate_random_string(16).await;
-
-        let user = UserRepository::new(pool)
-            .create(&user_npub)
-            .await
-            .expect("Failed to create user");
-
-        user.npub
-    }
-
-    async fn delete_test_user_and_relay(pool: &PgPool, npub: String, relay: Relay) {
-        RelayRepository::new(pool.clone())
-            .delete(relay.uuid)
-            .await
-            .expect("Failed to delete relay");
-
-        UserRepository::new(pool.clone())
-            .delete(&npub)
-            .await
-            .expect("Failed to delete user");
+        test_utils.revert_migrations();
     }
 
     #[tokio::test]
-    async fn test_create_and_get_relay() {
-        let pool = create_test_pool().await;
+    async fn test_create_get_update_relay() {
+        let test_utils = TestUtils::new().await;
+        let user = test_utils.create_user().await;
+        let order = test_utils.create_relay_order(&user.npub.as_str()).await;
+        let relay = test_utils.create_relay(order).await;
 
-        let relay_name = "Test Relay";
-        let relay_description = "This is a test relay";
-        let user_npub = create_test_user().await;
-
-        let order = RelayOrderRepository::new(pool.clone())
-            .create(CreateRelayOrder {
-                user_npub: user_npub.clone(),
-                amount: 100,
-                cloud_provider: CloudProvider::AWS,
-                instance_type: InstanceType::AwsT2Nano,
-                implementation: RelayImplementation::Strfry,
-                hostname: "test.relaying.io".to_string(),
-                status: RelayOrderStatus::Pending,
-            })
-            .await
-            .expect("Failed to create relay order");
-
-        // Test create_relay function
-        let relay = CreateRelay {
-            user_npub: user_npub.clone(),
-            relay_order_uuid: order.uuid,
-            name: relay_name.to_string(),
-            description: relay_description.to_string(),
-            subdomain: generate_random_string(10).await,
-            custom_domain: generate_random_string(10).await,
-            instance_type: InstanceType::AwsT2Nano,
-            instance_id: generate_random_string(10).await,
-            instance_ip: generate_random_string(10).await,
-            implementation: RelayImplementation::Strfry,
-            cloud_provider: CloudProvider::AWS,
-            write_whitelist: json!({"key": "value"}),
-            read_whitelist: json!({"key": "value"}),
-            expires_at: chrono::Local::now().naive_utc(),
-        };
-        let created_relay = RelayRepository::new(pool.clone())
-            .create(relay)
-            .await
-            .expect("Failed to create relay");
-
-        // Test get_relay function
-        let retrieved_relay = RelayRepository::new(pool.clone())
-            .get_one(created_relay.uuid)
+        let retrieved_relay = test_utils.relay_repo
+            .get_one(&relay.uuid)
             .await
             .expect("Failed to retrieve relay");
-        assert_eq!(retrieved_relay.name, relay_name);
-        assert_eq!(retrieved_relay.description, relay_description);
 
-        delete_test_user_and_relay(&pool, user_npub, retrieved_relay).await;
-    }
-
-    #[tokio::test]
-    async fn test_update_relay() {
-        let pool = create_test_pool().await;
-        let relay_name = "Test Relay";
-        let relay_description = "This is a test relay";
-        let relay_user_npub = create_test_user().await;
-
-        let order = RelayOrderRepository::new(pool.clone())
-            .create(CreateRelayOrder {
-                user_npub: relay_user_npub.clone(),
-                amount: 100,
-                cloud_provider: CloudProvider::AWS,
-                instance_type: InstanceType::AwsT2Nano,
-                implementation: RelayImplementation::Strfry,
-                hostname: "test.relaying.io".to_string(),
-                status: RelayOrderStatus::Pending,
-            })
-            .await
-            .expect("Failed to create relay order");
-
-        // Create a relay to update
-        let relay = CreateRelay {
-            user_npub: relay_user_npub.clone(),
-            relay_order_uuid: order.uuid,
-            name: relay_name.to_string(),
-            description: relay_description.to_string(),
-            subdomain: generate_random_string(10).await,
-            custom_domain: generate_random_string(10).await,
-            instance_type: InstanceType::AwsT2Nano,
-            instance_id: generate_random_string(10).await,
-            instance_ip: generate_random_string(10).await,
-            implementation: RelayImplementation::Strfry,
-            cloud_provider: CloudProvider::AWS,
-            write_whitelist: json!({"key": "value"}),
-            read_whitelist: json!({"key": "value"}),
-            expires_at: chrono::Local::now().naive_utc(),
-        };
-        let created_relay = RelayRepository::new(pool.clone())
-            .create(relay)
-            .await
-            .expect("Failed to create relay");
-
-        // Test update_relay function
-        let updated_name = "Updated Relay Name";
-        let updated_description = "This is an updated relay";
-        let updated_write_whitelist = json!({"updated_key": "updated_value"});
-        let updated_read_whitelist = json!({"updated_key": "updated_value"});
+        assert_eq!(retrieved_relay.name, "test relay");
+        assert_eq!(retrieved_relay.description, "test description");
 
         let updated_relay = UpdateRelay {
-            name: updated_name.to_string(),
-            description: updated_description.to_string(),
-            write_whitelist: updated_write_whitelist,
-            read_whitelist: updated_read_whitelist,
+            name: "Updated Relay Name".to_string(),
+            description: "This is an updated relay".to_string(),
+            write_whitelist: json!({"updated_key": "updated_value"}),
+            read_whitelist: json!({"updated_key": "updated_value"}),
         };
 
-        let updated_relay = RelayRepository::new(pool.clone())
-            .update(created_relay.uuid, updated_relay)
+        let updated_relay = test_utils.relay_repo
+            .update(retrieved_relay.uuid, updated_relay)
             .await
             .expect("Failed to update relay");
 
-        assert_eq!(updated_relay.name, updated_name);
-        assert_eq!(updated_relay.description, updated_description);
+        assert_eq!(updated_relay.name, "Updated Relay Name");
+        assert_eq!(updated_relay.description, "This is an updated relay");
 
-        delete_test_user_and_relay(&pool, relay_user_npub, updated_relay).await;
+        test_utils.relay_repo.delete(&updated_relay.uuid).await.unwrap();
+        
+        // assert it's deleted
+        let deleted_relay = test_utils.relay_repo
+            .get_one(&updated_relay.uuid)
+            .await;
+
+        assert!(deleted_relay.is_none());
+
+        test_utils.revert_migrations().await;
     }
 }

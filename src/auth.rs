@@ -51,6 +51,22 @@ pub fn generate_token(sub: &secp256k1::XOnlyPublicKey) -> Result<String, Error> 
         .map_err(|_| actix_web::error::ErrorInternalServerError("Failed to generate token"))
 }
 
+pub fn generate_jwt_by_hex(sub: &str) -> Result<String, Error> {
+    let expiration = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(1))
+        .expect("Could not set expiration time.");
+
+    let claims = Claims {
+        sub: sub.to_string(),
+        exp: expiration.timestamp() as usize,
+    };
+
+    let secret = dotenvy::var("JWT_SECRET").unwrap();
+    let encoding_key = EncodingKey::from_secret(secret.as_ref());
+    encode(&Header::default(), &claims, &encoding_key)
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Failed to generate token"))
+}
+
 pub fn validate_nip98(req: &HttpRequest) -> Result<Event, actix_web::Error> {
     let auth_header = req.headers().get("Authorization");
     if auth_header.is_none() {

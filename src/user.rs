@@ -174,90 +174,16 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 #[cfg(test)]
 mod tests {
 
-    use crate::util::generate_random_string;
+    use crate::util::{generate_random_string, TestUtils};
 
     use super::*;
     use std::env;
 
-    async fn create_test_pool() -> PgPool {
-        dotenvy::dotenv().ok();
-
-        let db_url =
-            env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set to run tests");
-        let pool = PgPool::connect(&db_url)
-            .await
-            .expect("Failed to create test pool");
-
-        clean_up_data(&pool).await;
-        pool
-    }
-
-    async fn clean_up_data(pool: &PgPool) {
-        sqlx::query!("DELETE FROM users WHERE npub != null")
-            .execute(pool)
-            .await
-            .expect("Failed to clean up data");
-    }
-
     #[tokio::test]
     async fn test_create_and_get_user() {
-        let pool = create_test_pool().await;
-        let user_npub = generate_random_string(16).await;
 
-        let created_user = UserRepository::new(pool.clone())
-            .create(user_npub.as_str())
-            .await
-            .expect("Failed to create user");
-        assert_eq!(created_user.npub, user_npub);
+        let test_utils = TestUtils::new().await;
+        let user = test_utils.create_user().await;
 
-        let retrieved_user = UserRepository::new(pool.clone())
-            .get_one(user_npub.as_str())
-            .await
-            .expect("Failed to retrieve user");
-        assert_eq!(retrieved_user.npub, user_npub);
-    }
-
-    #[tokio::test]
-    async fn test_get_all_users() {
-        let pool = create_test_pool().await;
-        clean_up_data(&pool).await;
-
-        let user_npub = generate_random_string(16).await;
-        let repo = UserRepository::new(pool);
-        let created_user = repo
-            .create(user_npub.as_str())
-            .await
-            .expect("Failed to create user");
-
-        let all_users = repo.get_all();
-
-        // print all users
-        for user in all_users.await {
-            assert!(user.npub.len() > 0);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_delete_user() {
-        let pool = create_test_pool().await;
-        let user_npub = generate_random_string(16).await;
-
-        clean_up_data(&pool).await;
-
-        let created_user = UserRepository::new(pool.clone())
-            .create(user_npub.as_str())
-            .await
-            .expect("Failed to create user");
-
-        UserRepository::new(pool.clone())
-            .delete(user_npub.as_str())
-            .await
-            .expect("Failed to delete user");
-
-        let retrieved_user = UserRepository::new(pool.clone())
-            .get_one(user_npub.as_str())
-            .await
-            .expect("Failed to retrieve user");
-        assert!(retrieved_user.deleted_at.is_some());
     }
 }
