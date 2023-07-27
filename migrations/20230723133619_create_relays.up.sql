@@ -1,7 +1,7 @@
 -- Add up migration script here
 CREATE TABLE relays (
   uuid VARCHAR(50) NOT NULL UNIQUE PRIMARY KEY,
-  user_npub VARCHAR(30) NOT NULL REFERENCES users(npub),
+  user_npub VARCHAR(100) NOT NULL REFERENCES users(npub),
   relay_order_uuid VARCHAR(50) NOT NULL REFERENCES relay_orders(uuid),
   name VARCHAR(30) NOT NULL,
   description TEXT NOT NULL,

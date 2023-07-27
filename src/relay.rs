@@ -1,7 +1,8 @@
 use super::cloud_provider::{CloudProvider, InstanceType};
+use actix_web::{web, HttpResponse, Responder};
 use crate::{
     cloud_provider::{launch_instance, LaunchCloudInstance},
-    user::UserRepository,
+    user::UserRepository, middleware::AuthorizationService,
 };
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
@@ -125,6 +126,19 @@ impl RelayRepository {
     pub async fn get_one(self: &Self, uuid: String) -> Option<Relay> {
         let relay = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE uuid = $1")
             .bind(uuid)
+            .fetch_optional(&self.pool)
+            .await;
+
+        match relay {
+            Ok(Some(relay)) => Some(Relay::from_db_relay(relay)),
+            _ => None,
+        }
+    }
+
+    pub async fn get_one_by_user(self: &Self, uuid: String, npub: String) ->Option<Relay> {
+        let relay = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE uuid = $1 AND user_npub = $2")
+            .bind(uuid)
+            .bind(npub)
             .fetch_optional(&self.pool)
             .await;
 
@@ -274,6 +288,23 @@ pub async fn create_relay_service(
             Ok(relay)
         }
         Err(err) => Err(err),
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Handlers
+// -----------------------------------------------------------------------------
+
+pub async fn get_relay_handler(
+    _auth: AuthorizationService,
+    relay_repo: web::Data<RelayRepository>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let relay = relay_repo.get_one(path.into_inner()).await;
+
+    match relay {
+        Some(relay) => HttpResponse::Ok().json(relay),
+        None => HttpResponse::NotFound().finish(),
     }
 }
 

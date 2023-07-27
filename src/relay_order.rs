@@ -9,6 +9,7 @@ use sqlx::Error as SqlxError;
 use sqlx::PgPool;
 use std::fmt;
 
+use crate::middleware::AuthorizationService;
 use crate::relay_order;
 use crate::{
     cloud_provider::{CloudProvider, InstanceType},
@@ -84,6 +85,19 @@ impl RelayOrderRepository {
             .await?;
 
         Ok(relay_order)
+    }
+
+    pub async fn get_all(&self) -> Result<Vec<RelayOrder>, RelayOrderRepositoryError> {
+        let relay_orders: Vec<RelayOrder> = sqlx::query_as::<_, RelayOrder>(
+            "
+            SELECT uuid, user_npub, amount, cloud_provider, instance_type, implementation, hostname, status, created_at, updated_at
+            FROM relay_orders
+            ",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(relay_orders)
     }
 
     pub async fn delete(&self, uuid: String) -> Result<(), RelayOrderRepositoryError> {
@@ -195,6 +209,7 @@ pub struct CreateRelayOrder {
 }
 
 async fn create_relay_order_handler(
+    _auth: AuthorizationService,
     relay_order_repo: web::Data<RelayOrderRepository>,
     data: web::Json<CreateRelayOrder>,
 ) -> impl Responder {
@@ -204,20 +219,6 @@ async fn create_relay_order_handler(
         Ok(order) => HttpResponse::Created().json(DataResponse::new(order)),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse::new(e.to_string())),
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct Payload {
-    status: String,
-    amount: f64,
-    uuid: String,
-    metadata: Metadata,
-}
-
-#[derive(Debug, Deserialize)]
-struct Metadata {
-    npub: String,
-    order_uuid: String,
 }
 
 #[derive(Debug, Serialize)]

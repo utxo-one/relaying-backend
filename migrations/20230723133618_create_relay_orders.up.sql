@@ -1,6 +1,6 @@
 CREATE TABLE relay_orders (
     uuid varchar(50) NOT NULL UNIQUE PRIMARY KEY,
-    user_npub varchar(30) NOT NULL references users(npub),
+    user_npub varchar(100) NOT NULL references users(npub),
     amount int NOT NULL,
     cloud_provider relay_cloud_provider NOT NULL,
     instance_type relay_instance_type NOT NULL,

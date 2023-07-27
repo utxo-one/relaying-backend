@@ -1,10 +1,12 @@
 use actix_web::{web, HttpResponse, Responder};
 use chrono::NaiveDateTime;
+use nostr::prelude::FromBech32;
+use secp256k1::XOnlyPublicKey;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use serde::{Deserialize, Serialize};
 
-use crate::util::{DataResponse, ErrorResponse};
+use crate::util::{DataResponse, ErrorResponse, bech32_encode};
 
 // -----------------------------------------------------------------------------
 // Models & DTOs
@@ -13,6 +15,7 @@ use crate::util::{DataResponse, ErrorResponse};
 #[derive(Serialize, Deserialize, FromRow, Clone)]
 pub struct User {
     pub npub: String,
+    pub hexpub: String,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub deleted_at: Option<NaiveDateTime>,
@@ -22,6 +25,7 @@ impl User {
     pub fn from_db_user(db_user: User) -> Self {
         User {
             npub: db_user.npub,
+            hexpub: db_user.hexpub,
             created_at: db_user.created_at,
             updated_at: db_user.updated_at,
             deleted_at: db_user.deleted_at,
@@ -31,7 +35,7 @@ impl User {
 
 #[derive(serde::Deserialize)]
 struct CreateUserDto {
-    pub npub: String,
+    pub hexpub: String,
 }
 
 // -----------------------------------------------------------------------------
@@ -69,10 +73,11 @@ impl UserRepository {
         db_users.into_iter().map(User::from_db_user).collect()
     }
 
-    pub async fn create(&self, user_npub: &str) -> Result<User, sqlx::Error> {
+    pub async fn create(&self, npub: &str, hexpub: &str) -> Result<User, sqlx::Error> {
         let db_user: User =
-            sqlx::query_as::<_, User>("INSERT INTO users (npub) VALUES ($1) RETURNING *")
-                .bind(user_npub)
+            sqlx::query_as::<_, User>("INSERT INTO users (npub, hexpub) VALUES ($1, $2) RETURNING *")
+                .bind(npub)
+                .bind(hexpub)
                 .fetch_one(&self.pool)
                 .await?;
 
@@ -123,10 +128,22 @@ async fn create_user_handler(
     user_repo: web::Data<UserRepository>,
     user: web::Json<CreateUserDto>,
 ) -> impl Responder {
-    match user_repo.create(&user.npub).await {
-        Ok(created_user) => HttpResponse::Created().json(DataResponse::new(created_user)),
+
+    let user_npub = bech32_encode(&user.hexpub);
+
+    eprintln!("user_npub: {:?}", user_npub);
+
+    match user_npub {
+        Ok(user_npub) => {
+            match user_repo.create(&user_npub, &user.hexpub).await {
+                Ok(created_user) => HttpResponse::Created().json(DataResponse::new(created_user)),
+                Err(e) => {
+                    HttpResponse::BadRequest().json(ErrorResponse::new(e.to_string()))
+                }
+            }
+        }
         Err(_) => {
-            HttpResponse::BadRequest().json(ErrorResponse::new("Npub already exists".to_string()))
+            return HttpResponse::BadRequest().json(ErrorResponse::new("Invalid hex pub key".to_string()));
         }
     }
 }

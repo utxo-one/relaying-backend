@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::{web::Data, App, HttpServer};
+use actix_web::{web::Data, App, HttpServer, middleware::Logger};
 use sqlx::postgres::PgPool;
 use std::{env, sync::Arc};
 
@@ -30,6 +30,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(Logger::default())
             .wrap(Cors::permissive())
             .app_data(Data::new(pool.clone()))
             .app_data(Data::new(user_repo.clone()))
