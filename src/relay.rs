@@ -1,9 +1,10 @@
 use super::cloud_provider::{CloudProvider, InstanceType};
-use actix_web::{web, HttpResponse, Responder};
 use crate::{
     cloud_provider::{launch_instance, LaunchCloudInstance},
-    user::UserRepository, middleware::AuthorizationService,
+    middleware::AuthorizationService,
+    user::UserRepository,
 };
+use actix_web::{web, HttpResponse, Responder};
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
@@ -135,12 +136,13 @@ impl RelayRepository {
         }
     }
 
-    pub async fn get_one_by_user(self: &Self, uuid: String, npub: String) ->Option<Relay> {
-        let relay = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE uuid = $1 AND user_npub = $2")
-            .bind(uuid)
-            .bind(npub)
-            .fetch_optional(&self.pool)
-            .await;
+    pub async fn get_one_by_user(self: &Self, uuid: String, npub: String) -> Option<Relay> {
+        let relay =
+            sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE uuid = $1 AND user_npub = $2")
+                .bind(uuid)
+                .bind(npub)
+                .fetch_optional(&self.pool)
+                .await;
 
         match relay {
             Ok(Some(relay)) => Some(Relay::from_db_relay(relay)),
@@ -371,7 +373,8 @@ mod tests {
         let order = test_utils.create_relay_order(&user.npub.as_str()).await;
         let relay = test_utils.create_relay(order).await;
 
-        let retrieved_relay = test_utils.relay_repo
+        let retrieved_relay = test_utils
+            .relay_repo
             .get_one(&relay.uuid)
             .await
             .expect("Failed to retrieve relay");
@@ -386,7 +389,8 @@ mod tests {
             read_whitelist: json!({"updated_key": "updated_value"}),
         };
 
-        let updated_relay = test_utils.relay_repo
+        let updated_relay = test_utils
+            .relay_repo
             .update(retrieved_relay.uuid, updated_relay)
             .await
             .expect("Failed to update relay");
@@ -394,12 +398,14 @@ mod tests {
         assert_eq!(updated_relay.name, "Updated Relay Name");
         assert_eq!(updated_relay.description, "This is an updated relay");
 
-        test_utils.relay_repo.delete(&updated_relay.uuid).await.unwrap();
-        
+        test_utils
+            .relay_repo
+            .delete(&updated_relay.uuid)
+            .await
+            .unwrap();
+
         // assert it's deleted
-        let deleted_relay = test_utils.relay_repo
-            .get_one(&updated_relay.uuid)
-            .await;
+        let deleted_relay = test_utils.relay_repo.get_one(&updated_relay.uuid).await;
 
         assert!(deleted_relay.is_none());
 

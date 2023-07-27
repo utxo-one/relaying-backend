@@ -157,9 +157,7 @@ impl TestUtils {
             DROP TABLE IF EXISTS users CASCADE;
     ";
 
-    let _ = sqlx::query(drop_query)
-        .execute(&self.pool)
-        .await;
+        let _ = sqlx::query(drop_query).execute(&self.pool).await;
 
         Ok(())
     }
