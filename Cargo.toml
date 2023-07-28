@@ -37,6 +37,7 @@ futures-util = "*"
 actix-jwt-auth-middleware = "0.3.0"
 bech32 = "0.8.1"
 hex = "0.4.3"
+reqwest = { version = "0.11", features = ["json"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -10,6 +10,7 @@ CREATE TABLE relays (
   instance_type relay_instance_type NOT NULL,
   instance_id VARCHAR(50) NOT NULL,
   instance_ip VARCHAR(50) NOT NULL,
+  state relay_state NOT NULL,
   implementation relay_implementation NOT NULL,
   cloud_provider relay_cloud_provider NOT NULL,
   write_whitelist JSONB NOT NULL,

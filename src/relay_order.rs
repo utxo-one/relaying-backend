@@ -1,6 +1,7 @@
 use actix_web::HttpRequest;
 use actix_web::{web, HttpResponse, Responder};
 use chrono::NaiveDateTime;
+use dotenvy::dotenv;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,6 +9,7 @@ use sha2::Sha256;
 use sqlx::Error as SqlxError;
 use sqlx::PgPool;
 use std::fmt;
+use serde_json::json;
 
 use crate::middleware::AuthorizationService;
 use crate::relay_order;
@@ -16,6 +18,10 @@ use crate::{
     relay::RelayImplementation,
     util::{DataResponse, ErrorResponse},
 };
+
+/// -----------------------------------------------------------------------------
+/// Models & DTOs
+/// -----------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub enum RelayOrderRepositoryError {
@@ -37,6 +43,148 @@ impl fmt::Display for RelayOrderRepositoryError {
         }
     }
 }
+
+#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
+pub struct RelayOrder {
+    pub uuid: String,
+    pub user_npub: String,
+    pub amount: i32,
+    pub cloud_provider: CloudProvider,
+    pub instance_type: InstanceType,
+    pub implementation: RelayImplementation,
+    pub hostname: String,
+    pub status: RelayOrderStatus,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+impl RelayOrder {
+    pub fn from_db_relay_order(relay_order: RelayOrder) -> Self {
+        RelayOrder {
+            uuid: relay_order.uuid,
+            user_npub: relay_order.user_npub,
+            amount: relay_order.amount,
+            cloud_provider: relay_order.cloud_provider,
+            instance_type: relay_order.instance_type,
+            implementation: relay_order.implementation,
+            hostname: relay_order.hostname,
+            status: relay_order.status,
+            created_at: relay_order.created_at,
+            updated_at: relay_order.updated_at,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CreateRelayOrder {
+    pub user_npub: String,
+    pub amount: i32,
+    pub cloud_provider: CloudProvider,
+    pub instance_type: InstanceType,
+    pub implementation: RelayImplementation,
+    pub hostname: String,
+    pub status: RelayOrderStatus,
+}
+
+
+#[derive(Debug, Deserialize, Serialize, sqlx::Type)]
+#[sqlx(type_name = "relay_order_status", rename_all = "lowercase")]
+pub enum RelayOrderStatus {
+    Pending,
+    Paid,
+    Redeemed,
+}
+
+impl RelayOrderStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelayOrderStatus::Pending => "pending",
+            RelayOrderStatus::Paid => "paid",
+            RelayOrderStatus::Redeemed => "redeemed",
+        }
+    }
+}
+
+impl ToString for RelayOrderStatus {
+    fn to_string(&self) -> String {
+        match &self {
+            RelayOrderStatus::Pending => "pending".to_string(),
+            RelayOrderStatus::Paid => "paid".to_string(),
+            RelayOrderStatus::Redeemed => "redeemed".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NodelessResponse {
+    data: NodelessData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NodelessData {
+    #[serde(rename = "id")]
+    id: String,
+
+    #[serde(rename = "checkoutLink")]
+    checkout_link: String,
+
+    #[serde(rename = "satsAmount")]
+    sats_amount: u32,
+
+    #[serde(rename = "status")]
+    status: String,
+
+    #[serde(rename = "buyerEmail")]
+    buyer_email: Option<String>,
+
+    #[serde(rename = "redirectUrl")]
+    redirect_url: String,
+
+    #[serde(rename = "metadata")]
+    metadata: NodelessMetadata,
+
+    #[serde(rename = "createdAt")]
+    created_at: String,
+
+    #[serde(rename = "paidAt")]
+    paid_at: Option<String>,
+
+    #[serde(rename = "onchainAddress")]
+    onchain_address: String,
+
+    #[serde(rename = "lightningInvoice")]
+    lightning_invoice: String,
+
+    #[serde(rename = "store")]
+    store: NodelessStore,
+
+    #[serde(rename = "qrCodes")]
+    qr_codes: NodelessQrCodes,
+}
+
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NodelessMetadata {
+    user_npub: String,
+    order_uuid: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NodelessStore {
+    id: String,
+    name: Option<String>,
+    url: Option<String>,
+    email: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct NodelessQrCodes {
+    unified: String,
+}
+
+/// -----------------------------------------------------------------------------
+/// Repository
+/// -----------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub struct RelayOrderRepository {
@@ -138,74 +286,40 @@ impl RelayOrderRepository {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, sqlx::Type)]
-#[sqlx(type_name = "relay_order_status", rename_all = "lowercase")]
-pub enum RelayOrderStatus {
-    Pending,
-    Paid,
-    Redeemed,
-}
+async fn create_nodeless_invoice(order: RelayOrder) -> Result<NodelessResponse, reqwest::Error> {
+    let url = "https://nodeless.io/api/v1/store/".to_string() + dotenvy::var("NODELESS_STORE_ID").unwrap().as_str() + "/invoice";
+    let redirect_url: String = dotenvy::var("BACKEND_URL").unwrap().to_string() + "/relays";
 
-impl RelayOrderStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RelayOrderStatus::Pending => "pending",
-            RelayOrderStatus::Paid => "paid",
-            RelayOrderStatus::Redeemed => "redeemed",
+    eprintln!("URL: {}", url);
+    eprintln!("Redirect URL: {}", redirect_url);
+
+    let payload = json!({
+        "amount": order.amount,
+        "currency": "SATS",
+        "redirectUrl": redirect_url,
+        "metadata": {
+            "order_uuid": order.uuid,
+            "user_npub": order.user_npub,
         }
-    }
-}
+    });
 
-impl ToString for RelayOrderStatus {
-    fn to_string(&self) -> String {
-        match &self {
-            RelayOrderStatus::Pending => "pending".to_string(),
-            RelayOrderStatus::Paid => "paid".to_string(),
-            RelayOrderStatus::Redeemed => "redeemed".to_string(),
-        }
-    }
-}
+    let client = reqwest::Client::new();
 
-#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
-pub struct RelayOrder {
-    pub uuid: String,
-    pub user_npub: String,
-    pub amount: i32,
-    pub cloud_provider: CloudProvider,
-    pub instance_type: InstanceType,
-    pub implementation: RelayImplementation,
-    pub hostname: String,
-    pub status: RelayOrderStatus,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-}
+    let response = client.post(url)
+        .header("Authorization", format!("Bearer {}", dotenvy::var("NODELESS_API_KEY").unwrap()))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .json(&payload)
+        .send()
+        .await?;
 
-impl RelayOrder {
-    pub fn from_db_relay_order(relay_order: RelayOrder) -> Self {
-        RelayOrder {
-            uuid: relay_order.uuid,
-            user_npub: relay_order.user_npub,
-            amount: relay_order.amount,
-            cloud_provider: relay_order.cloud_provider,
-            instance_type: relay_order.instance_type,
-            implementation: relay_order.implementation,
-            hostname: relay_order.hostname,
-            status: relay_order.status,
-            created_at: relay_order.created_at,
-            updated_at: relay_order.updated_at,
-        }
-    }
-}
+    let response = response.json().await?;
 
-#[derive(Serialize, Deserialize)]
-pub struct CreateRelayOrder {
-    pub user_npub: String,
-    pub amount: i32,
-    pub cloud_provider: CloudProvider,
-    pub instance_type: InstanceType,
-    pub implementation: RelayImplementation,
-    pub hostname: String,
-    pub status: RelayOrderStatus,
+    eprintln!("Response: {:?}", &response);
+
+    //let response_json: NodelessResponse = response;
+
+    Ok(response)
 }
 
 async fn create_relay_order_handler(
@@ -214,16 +328,12 @@ async fn create_relay_order_handler(
     data: web::Json<CreateRelayOrder>,
 ) -> impl Responder {
     let order = relay_order_repo.create(data.into_inner()).await;
+    let nodeless = create_nodeless_invoice(order.unwrap()).await;
 
-    match order {
-        Ok(order) => HttpResponse::Created().json(DataResponse::new(order)),
+    match nodeless {
+        Ok(invoice) => HttpResponse::Created().json(DataResponse::new(invoice.data)),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse::new(e.to_string())),
     }
-}
-
-#[derive(Debug, Serialize)]
-struct JsonResponse {
-    message: String,
 }
 
 pub async fn nodeless_webhook_handler(

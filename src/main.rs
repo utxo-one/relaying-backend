@@ -38,7 +38,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(Data::new(relay_repo.clone()))
             .configure(user::configure_routes)
             .configure(auth::configure_routes)
-            .configure(relay_order::configure_routes) // Mount the user handlers
+            .configure(relay_order::configure_routes)
+            .configure(relay::configure_routes)
     })
     .bind("127.0.0.1:8888")?
     .run()

@@ -17,6 +17,10 @@ CREATE TYPE relay_instance_type AS ENUM (
     'azureb1s', 'azureb1ms', 'azureb2s', 'azureb2ms'
 );
 
+CREATE TYPE relay_state AS ENUM (
+    'rebooting', 'initializing', 'online', 'offline', 'deleted'
+);
+
 CREATE TABLE users (
   npub VARCHAR(100) NOT NULL UNIQUE PRIMARY KEY,
   hexpub VARCHAR(100) NOT NULL UNIQUE,

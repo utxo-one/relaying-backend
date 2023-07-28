@@ -12,6 +12,10 @@ use sqlx::FromRow;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// -----------------------------------------------------------------------------
+/// Models & DTOs
+/// -----------------------------------------------------------------------------
+
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Relay {
     pub uuid: String,
@@ -20,6 +24,7 @@ pub struct Relay {
     pub description: String,
     pub subdomain: String,
     pub custom_domain: String,
+    pub state: RelayState,
     pub instance_type: InstanceType,
     pub instance_id: String,
     pub instance_ip: String,
@@ -42,6 +47,7 @@ impl Relay {
             description: relay.description,
             subdomain: relay.subdomain,
             custom_domain: relay.custom_domain,
+            state: relay.state,
             instance_type: relay.instance_type,
             instance_id: relay.instance_id,
             instance_ip: relay.instance_ip,
@@ -55,6 +61,16 @@ impl Relay {
             deleted_at: relay.deleted_at,
         }
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, sqlx::Type, Clone, Copy)]
+#[sqlx(type_name = "relay_state", rename_all = "lowercase")]
+pub enum RelayState {
+    Rebooting,
+    Initializing,
+    Online,
+    Offline,
+    Deleted,
 }
 
 #[derive(Debug, Deserialize, Serialize, sqlx::Type, Clone, Copy)]
@@ -114,6 +130,10 @@ pub struct CreateRelayService {
     pub expires_at: chrono::NaiveDateTime,
 }
 
+/// -----------------------------------------------------------------------------
+/// Repository
+/// -----------------------------------------------------------------------------
+
 #[derive(Clone)]
 pub struct RelayRepository {
     pub pool: PgPool,
@@ -161,7 +181,7 @@ impl RelayRepository {
         }
     }
 
-    pub async fn get_user_relays(self: &Self, npub: String) -> Vec<Relay> {
+    pub async fn get_user_relays(self: &Self, npub: &str) -> Vec<Relay> {
         let relays = sqlx::query_as::<_, Relay>("SELECT * FROM relays WHERE user_npub = $1")
             .bind(npub)
             .fetch_all(&self.pool)
@@ -245,6 +265,10 @@ impl RelayRepository {
     }
 }
 
+/// -----------------------------------------------------------------------------
+/// Service
+/// -----------------------------------------------------------------------------
+
 pub async fn create_relay_service(
     pool: &PgPool,
     relay: CreateRelayService,
@@ -297,17 +321,19 @@ pub async fn create_relay_service(
 // Handlers
 // -----------------------------------------------------------------------------
 
-pub async fn get_relay_handler(
-    _auth: AuthorizationService,
+pub async fn get_relays_handler(
+    auth: AuthorizationService,
     relay_repo: web::Data<RelayRepository>,
-    path: web::Path<String>,
 ) -> impl Responder {
-    let relay = relay_repo.get_one(&path.into_inner()).await;
+    let relays = relay_repo.get_user_relays(auth.npub().unwrap()).await;
+    HttpResponse::Ok().json(relays)
+}
 
-    match relay {
-        Some(relay) => HttpResponse::Ok().json(relay),
-        None => HttpResponse::NotFound().finish(),
-    }
+pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/relays")
+            .route("", web::get().to(get_relays_handler))
+    );
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use crate::util::ErrorResponse;
+use crate::util::{ErrorResponse, bech32_encode};
 use actix_web::{web, Error, FromRequest, HttpRequest, HttpResponse};
 use base64::{engine::general_purpose, Engine};
 use chrono::{TimeZone, Utc};
@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,
+    pub hexpub: String,
+    pub npub: String,
     pub exp: usize,
 }
 
@@ -35,13 +36,16 @@ const SCHEME: &str = "Nostr";
 // Functions
 // -----------------------------------------------------------------------------
 
-pub fn generate_token(sub: &secp256k1::XOnlyPublicKey) -> Result<String, Error> {
+pub fn generate_token(hexpub: &secp256k1::XOnlyPublicKey) -> Result<String, Error> {
     let expiration = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(1))
+        .checked_add_signed(chrono::Duration::hours(24))
         .expect("Could not set expiration time.");
 
+    let hexpub = hexpub.to_string();
+
     let claims = Claims {
-        sub: sub.to_string(),
+        hexpub: hexpub.to_string(),
+        npub: bech32_encode(&hexpub).unwrap(),
         exp: expiration.timestamp() as usize,
     };
 
@@ -51,13 +55,16 @@ pub fn generate_token(sub: &secp256k1::XOnlyPublicKey) -> Result<String, Error> 
         .map_err(|_| actix_web::error::ErrorInternalServerError("Failed to generate token"))
 }
 
-pub fn generate_jwt_by_hex(sub: &str) -> Result<String, Error> {
+pub fn generate_jwt_by_hex(hexpub: &str) -> Result<String, Error> {
     let expiration = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(1))
+        .checked_add_signed(chrono::Duration::hours(24))
         .expect("Could not set expiration time.");
 
+    let npub = bech32_encode(&hexpub.to_string()).unwrap();
+
     let claims = Claims {
-        sub: sub.to_string(),
+        hexpub: hexpub.to_string(),
+        npub: npub.to_string(),
         exp: expiration.timestamp() as usize,
     };
 

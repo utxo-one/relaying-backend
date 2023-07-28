@@ -6,12 +6,17 @@ use serde::Deserialize;
 use crate::auth::Claims;
 
 pub struct AuthorizationService {
-    sub: Option<String>,
+    hexpub: Option<String>,
+    npub: Option<String>,
 }
 
 impl AuthorizationService {
-    pub fn sub(&self) -> Option<&str> {
-        self.sub.as_deref()
+    pub fn hexpub(&self) -> Option<&String> {
+        self.hexpub.as_ref()
+    }
+
+    pub fn npub(&self) -> Option<&String> {
+        self.npub.as_ref()
     }
 }
 
@@ -30,8 +35,9 @@ impl FromRequest for AuthorizationService {
             match decode::<Claims>(token, &decoding_key, &Validation::default()) {
                 Ok(token_data) => {
                     // Extract the 'sub' field from the token and store it in AuthorizationService
-                    let sub = token_data.claims.sub;
-                    let auth_service = AuthorizationService { sub: Some(sub) };
+                    let hexpub = token_data.claims.hexpub;
+                    let npub = token_data.claims.npub;
+                    let auth_service = AuthorizationService { hexpub: Some(hexpub), npub: Some(npub) };
                     ready(Ok(auth_service))
                 }
                 Err(_) => ready(Err(actix_web::error::ErrorUnauthorized("Invalid token"))),
