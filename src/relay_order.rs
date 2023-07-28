@@ -13,6 +13,7 @@ use serde_json::json;
 
 use crate::middleware::AuthorizationService;
 use crate::relay_order;
+use crate::user::UserRepository;
 use crate::{
     cloud_provider::{CloudProvider, InstanceType},
     relay::RelayImplementation,
@@ -325,8 +326,14 @@ async fn create_nodeless_invoice(order: RelayOrder) -> Result<NodelessResponse, 
 async fn create_relay_order_handler(
     _auth: AuthorizationService,
     relay_order_repo: web::Data<RelayOrderRepository>,
+    user_repo: web::Data<UserRepository>,
     data: web::Json<CreateRelayOrder>,
 ) -> impl Responder {
+
+    if !user_repo.user_exists(&data.user_npub).await {
+        return HttpResponse::BadRequest().json(ErrorResponse::new("User does not exist".to_string()));
+    }
+
     let order = relay_order_repo.create(data.into_inner()).await;
     let nodeless = create_nodeless_invoice(order.unwrap()).await;
 
@@ -415,6 +422,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         );
 }
 
+///------------------------------------------------------------------------------
+/// Tests
+/// -----------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::RelayOrderRepository;
@@ -430,6 +441,7 @@ mod tests {
         relay::RelayImplementation,
         user::UserRepository,
         util::{generate_random_string, DataResponse},
+        relay_order::NodelessResponse,
     };
     use actix_web::{web::Data, App};
     use sqlx::PgPool;
@@ -485,17 +497,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_create_relay_order() {
+    async fn test_create_relay_order_handler() {
         let test_utils = TestUtils::new().await;
         let user = test_utils.create_user().await;
-        let order = test_utils.create_relay_order(&user.npub.as_str());
+        let order = test_utils.create_relay_order(&user.npub.as_str()).await;
 
-        let repo = RelayOrderRepository::new(test_utils.pool.clone());
+        let relay_order_repo = RelayOrderRepository::new(test_utils.pool.clone());
+        let user_repo: UserRepository = UserRepository::new(test_utils.pool.clone());
+
         let jwt_token = generate_jwt_by_hex(user.hexpub.as_str()).unwrap();
         let app = actix_web::test::init_service(
             App::new()
                 .app_data(Data::new(test_utils.pool.clone()))
-                .app_data(Data::new(repo))
+                .app_data(Data::new(relay_order_repo))
+                .app_data(Data::new(user_repo))
                 .route(
                     "/relay_orders",
                     actix_web::web::post().to(create_relay_order_handler),
@@ -505,13 +520,13 @@ mod tests {
         let req = actix_web::test::TestRequest::post()
             .uri("/relay_orders")
             .insert_header(("Authorization", jwt_token))
-            .set_json(&order.await)
+            .set_json(&order)
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
-
         assert_eq!(resp.status(), 201);
-        let response: DataResponse<RelayOrder> = actix_web::test::read_body_json(resp).await;
-        assert_eq!(response.data.user_npub, user.npub);
+
+        let response: NodelessResponse = actix_web::test::read_body_json(resp).await;
+        assert!(response.data.checkout_link.contains("https://nodeless.io/checkout/"));
 
         test_utils.revert_migrations().await;
     }

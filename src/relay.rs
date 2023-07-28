@@ -20,6 +20,7 @@ use uuid::Uuid;
 pub struct Relay {
     pub uuid: String,
     pub user_npub: String,
+    pub relay_order_uuid: String,
     pub name: String,
     pub description: String,
     pub subdomain: String,
@@ -43,6 +44,7 @@ impl Relay {
         Relay {
             uuid: relay.uuid,
             user_npub: relay.user_npub,
+            relay_order_uuid: relay.relay_order_uuid,
             name: relay.name,
             description: relay.description,
             subdomain: relay.subdomain,
@@ -215,8 +217,8 @@ impl RelayRepository {
     pub async fn create(self: &Self, relay: CreateRelay) -> Result<Relay, sqlx::Error> {
         let uuid = Uuid::new_v4();
         let db_relay: Relay = sqlx::query_as::<_, Relay>(
-            "INSERT INTO relays (uuid, user_npub, relay_order_uuid, name, description, subdomain, custom_domain, instance_type, instance_id, instance_ip, implementation, cloud_provider, write_whitelist, read_whitelist, created_at, updated_at, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::relay_instance_type, $9, $10, $11::relay_implementation, $12::relay_cloud_provider, $13, $14, $15, $16, $17)
+            "INSERT INTO relays (uuid, user_npub, relay_order_uuid, name, description, subdomain, custom_domain, instance_type, instance_id, instance_ip, implementation, cloud_provider, write_whitelist, read_whitelist, created_at, updated_at, expires_at, state)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::relay_instance_type, $9, $10, $11::relay_implementation, $12::relay_cloud_provider, $13, $14, $15, $16, $17, $18::relay_state)
             RETURNING *",
         )
         .bind(uuid.to_string())
@@ -236,6 +238,7 @@ impl RelayRepository {
         .bind(chrono::Local::now().naive_utc())
         .bind(chrono::Local::now().naive_utc())
         .bind(relay.expires_at.clone())
+        .bind(RelayState::Initializing)
         .fetch_one(&self.pool)
         .await?;
 
@@ -274,7 +277,7 @@ pub async fn create_relay_service(
     relay: CreateRelayService,
 ) -> Result<Relay, String> {
     let repo = UserRepository::new(pool.clone());
-    if !repo.user_exists(relay.user_npub.clone()).await {
+    if !repo.user_exists(&relay.user_npub).await {
         return Err("User does not exist".to_string());
     }
 
